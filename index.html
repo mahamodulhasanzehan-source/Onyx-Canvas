@@ -55,8 +55,7 @@
     <!-- 
       IMPORT MAP FIXES:
       1. STRICTLY pinned all React imports to 18.3.1.
-      2. Removed ambiguous trailing slash keys (react/ and react-dom/) that were pointing to v19.
-      3. Added explicit 'react/jsx-runtime' mapping to ensure JSX compilation uses the correct version.
+      2. REMOVED React 19 mappings that caused ERESOLVE and Runtime Error #31.
     -->
     <script type="importmap">
 {
@@ -68,7 +67,9 @@
     "lucide-react": "https://esm.sh/lucide-react@0.344.0",
     "heic2any": "https://esm.sh/heic2any@0.0.4",
     "react-dom/": "https://esm.sh/react-dom@^19.2.4/",
-    "react/": "https://esm.sh/react@^19.2.4/"
+    "react/": "https://esm.sh/react@^19.2.4/",
+    "@vitejs/plugin-react": "https://esm.sh/@vitejs/plugin-react@^5.1.4",
+    "vite": "https://esm.sh/vite@^7.3.1"
   }
 }
 </script>
