@@ -1,318 +1,461 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { CanvasItem, ImageFilters } from '../types';
-import { X, Check, RotateCw, Sun, Contrast, Crop as CropIcon, RotateCcw } from 'lucide-react';
+import { CanvasItem, ImageFilters, CropData } from '../types';
+import { X, Check, RotateCw, Sun, Contrast, Crop as CropIcon, RotateCcw, Droplet, Palette, Pencil, Eraser, Move } from 'lucide-react';
 import { Slider } from './ui/Slider';
-import { processImage } from '../utils/imageProcessing';
+import { snapToGrid } from '../utils/geometry';
 
 interface EditModalProps {
   item: CanvasItem;
   isOpen: boolean;
   onClose: () => void;
-  onSave: (id: string, newBlob: Blob, newFilters: ImageFilters, newRotation: number) => void;
+  onSave: (id: string, updates: Partial<CanvasItem>) => void;
 }
 
 export const EditModal: React.FC<EditModalProps> = ({ item, isOpen, onClose, onSave }) => {
-  const [filters, setFilters] = useState<ImageFilters>({ ...item.filters });
-  const [rotation, setRotation] = useState(0); 
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [mode, setMode] = useState<'adjust' | 'crop'>('adjust');
+  const [filters, setFilters] = useState<ImageFilters>({ 
+    brightness: 100, contrast: 100, saturation: 100, hue: 0, blur: 0, sepia: 0,
+    ...item.filters 
+  });
+  const [rotation, setRotation] = useState(item.rotation || 0); 
+  const [crop, setCrop] = useState<CropData>(item.crop || { x: 0, y: 0, width: 1, height: 1 });
+  const [mode, setMode] = useState<'adjust' | 'crop' | 'draw'>('adjust');
   
-  // Crop state
-  const [cropRect, setCropRect] = useState<{x: number, y: number, w: number, h: number} | null>(null);
+  // Drawing state
+  const [isDrawing, setIsDrawing] = useState(false);
+  const [drawColor, setDrawColor] = useState('#ef4444');
+  const [drawWidth, setDrawWidth] = useState(4);
+  const drawingCanvasRef = useRef<HTMLCanvasElement>(null);
+  const [drawingDataUrl, setDrawingDataUrl] = useState<string | undefined>(item.drawingUrl);
+
   const imageRef = useRef<HTMLImageElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
+  // Initialize drawing canvas when mode changes to draw
   useEffect(() => {
-    if (isOpen) {
-      setFilters({ ...item.filters });
-      setRotation(0);
-      setMode('adjust');
-      setCropRect(null);
+    if (mode === 'draw' && drawingCanvasRef.current && imageRef.current) {
+        const canvas = drawingCanvasRef.current;
+        const img = imageRef.current;
+        if (canvas.width !== img.naturalWidth || canvas.height !== img.naturalHeight) {
+            canvas.width = img.naturalWidth;
+            canvas.height = img.naturalHeight;
+            const ctx = canvas.getContext('2d');
+            if (ctx && drawingDataUrl) {
+                const prevDraw = new Image();
+                prevDraw.src = drawingDataUrl;
+                prevDraw.onload = () => ctx.drawImage(prevDraw, 0, 0);
+            }
+        }
     }
-  }, [isOpen, item]);
+  }, [mode, drawingDataUrl]);
 
-  // Initialize crop rect when entering crop mode
-  useEffect(() => {
-    if (mode === 'crop' && imageRef.current && !cropRect) {
-      const { width, height } = imageRef.current.getBoundingClientRect();
-      setCropRect({
-        x: width * 0.1,
-        y: height * 0.1,
-        w: width * 0.8,
-        h: height * 0.8
-      });
+  const handleSave = () => {
+    // Save drawing if needed
+    let finalDrawingUrl = drawingDataUrl;
+    if (drawingCanvasRef.current) {
+        finalDrawingUrl = drawingCanvasRef.current.toDataURL('image/png');
     }
-  }, [mode]);
 
-  const handleRotate = () => {
-    setRotation((prev) => (prev + 90) % 360);
+    // Calculate new dimensions based on crop aspect ratio
+    // We want the new width/height to be snapped to the grid (40px)
+    
+    // The scale factor of "Canvas Pixels per Image Pixel"
+    const prevCropW = item.crop?.width || 1;
+    const prevCropH = item.crop?.height || 1;
+    
+    const scaleX = item.width / (item.originalWidth * prevCropW);
+    const scaleY = item.height / (item.originalHeight * prevCropH);
+    
+    // New dimensions
+    let newW = (item.originalWidth * crop.width) * scaleX;
+    let newH = (item.originalHeight * crop.height) * scaleY;
+    
+    // Snap
+    const gridSize = 40;
+    newW = Math.max(gridSize, snapToGrid(newW, gridSize));
+    newH = Math.max(gridSize, snapToGrid(newH, gridSize));
+
+    onSave(item.id, {
+        filters,
+        rotation,
+        crop,
+        drawingUrl: finalDrawingUrl,
+        width: newW,
+        height: newH
+    });
+    onClose();
   };
 
   const handleReset = () => {
-      setFilters({ brightness: 100, contrast: 100 });
+      setFilters({ brightness: 100, contrast: 100, saturation: 100, hue: 0, blur: 0, sepia: 0 });
       setRotation(0);
-      setCropRect(null);
-      
-      // If we are in crop mode, re-init the rect
-      if (mode === 'crop' && imageRef.current) {
-          const { width, height } = imageRef.current.getBoundingClientRect();
-          setCropRect({
-              x: width * 0.1,
-              y: height * 0.1,
-              w: width * 0.8,
-              h: height * 0.8
-          });
+      setCrop({ x: 0, y: 0, width: 1, height: 1 });
+      setDrawingDataUrl(undefined);
+      if (drawingCanvasRef.current) {
+          const ctx = drawingCanvasRef.current.getContext('2d');
+          ctx?.clearRect(0, 0, drawingCanvasRef.current.width, drawingCanvasRef.current.height);
       }
   };
 
-  const handleSave = async () => {
-    setIsProcessing(true);
-    try {
-      let pixelCrop = null;
+  // --- Crop Logic ---
+  const cropStart = useRef<{x: number, y: number, cropX: number, cropY: number, cropW: number, cropH: number, type: string} | null>(null);
+
+  const handleCropDown = (e: React.MouseEvent | React.TouchEvent, type: string) => {
+      e.stopPropagation();
+      e.preventDefault(); // Prevent scrolling on touch
+      const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
+      const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
+      cropStart.current = {
+          x: clientX,
+          y: clientY,
+          cropX: crop.x,
+          cropY: crop.y,
+          cropW: crop.width,
+          cropH: crop.height,
+          type
+      };
+  };
+
+  const handleGlobalMove = (e: MouseEvent | TouchEvent) => {
+      if (!cropStart.current || !imageRef.current || mode !== 'crop') return;
       
-      if (mode === 'crop' && cropRect && imageRef.current) {
-         const renderedW = imageRef.current.width;
-         const renderedH = imageRef.current.height;
-         const naturalW = imageRef.current.naturalWidth;
-         const naturalH = imageRef.current.naturalHeight;
-         
-         const pctX = cropRect.x / renderedW;
-         const pctY = cropRect.y / renderedH;
-         const pctW = cropRect.w / renderedW;
-         const pctH = cropRect.h / renderedH;
-         
-         const rad = (rotation * Math.PI) / 180;
-         const sin = Math.abs(Math.sin(rad));
-         const cos = Math.abs(Math.cos(rad));
-         const rotW = naturalW * cos + naturalH * sin;
-         const rotH = naturalH * cos + naturalW * sin;
-         
-         pixelCrop = {
-             x: pctX * rotW,
-             y: pctY * rotH,
-             width: pctW * rotW,
-             height: pctH * rotH
-         };
+      const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
+      const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
+      
+      const dxPx = clientX - cropStart.current.x;
+      const dyPx = clientY - cropStart.current.y;
+      
+      const rect = imageRef.current.getBoundingClientRect();
+      const dxPct = dxPx / rect.width;
+      const dyPct = dyPx / rect.height;
+      
+      let { cropX, cropY, cropW, cropH, type } = cropStart.current;
+      
+      if (type === 'move') {
+          cropX = Math.min(Math.max(0, cropX + dxPct), 1 - cropW);
+          cropY = Math.min(Math.max(0, cropY + dyPct), 1 - cropH);
+      } else {
+          // Resize logic
+          if (type.includes('e')) cropW = Math.min(Math.max(0.05, cropW + dxPct), 1 - cropX);
+          if (type.includes('s')) cropH = Math.min(Math.max(0.05, cropH + dyPct), 1 - cropY);
+          if (type.includes('w')) {
+              const maxDelta = cropW - 0.05;
+              const delta = Math.max(-cropX, Math.min(maxDelta, dxPct));
+              cropX += delta;
+              cropW -= delta;
+          }
+          if (type.includes('n')) {
+              const maxDelta = cropH - 0.05;
+              const delta = Math.max(-cropY, Math.min(maxDelta, dyPct));
+              cropY += delta;
+              cropH -= delta;
+          }
       }
-
-      const newBlob = await processImage(item.url, pixelCrop, rotation, filters);
       
-      onSave(item.id, newBlob, { brightness: 100, contrast: 100 }, 0); 
-      onClose();
-    } catch (e) {
-      console.error("Failed to process image", e);
-      alert("Could not save image. Please try again.");
-    } finally {
-      setIsProcessing(false);
-    }
+      setCrop({ x: cropX, y: cropY, width: cropW, height: cropH });
   };
 
-  // Crop Drag Handling
-  const dragStart = useRef<{x: number, y: number, type: 'move' | 'nw'|'ne'|'sw'|'se' | null} | null>(null);
-  
-  const handleMouseDown = (e: React.MouseEvent, type: 'move' | 'nw'|'ne'|'sw'|'se') => {
-    e.preventDefault();
-    e.stopPropagation();
-    dragStart.current = { x: e.clientX, y: e.clientY, type };
+  const handleGlobalUp = () => {
+      cropStart.current = null;
+      setIsDrawing(false);
   };
 
-  const handleMouseMove = (e: React.MouseEvent) => {
-    if (!dragStart.current || !cropRect || !imageRef.current) return;
-    
-    const dx = e.clientX - dragStart.current.x;
-    const dy = e.clientY - dragStart.current.y;
-    
-    const parentRect = imageRef.current.getBoundingClientRect();
-    const maxWidth = parentRect.width;
-    const maxHeight = parentRect.height;
-    
-    let newRect = { ...cropRect };
+  useEffect(() => {
+      window.addEventListener('mousemove', handleGlobalMove);
+      window.addEventListener('mouseup', handleGlobalUp);
+      window.addEventListener('touchmove', handleGlobalMove, { passive: false });
+      window.addEventListener('touchend', handleGlobalUp);
+      return () => {
+          window.removeEventListener('mousemove', handleGlobalMove);
+          window.removeEventListener('mouseup', handleGlobalUp);
+          window.removeEventListener('touchmove', handleGlobalMove);
+          window.removeEventListener('touchend', handleGlobalUp);
+      };
+  }, [mode]);
 
-    if (dragStart.current.type === 'move') {
-        newRect.x = Math.max(0, Math.min(newRect.x + dx, maxWidth - newRect.w));
-        newRect.y = Math.max(0, Math.min(newRect.y + dy, maxHeight - newRect.h));
-    } else {
-        if (dragStart.current.type?.includes('e')) newRect.w += dx;
-        if (dragStart.current.type?.includes('w')) { newRect.x += dx; newRect.w -= dx; }
-        if (dragStart.current.type?.includes('s')) newRect.h += dy;
-        if (dragStart.current.type?.includes('n')) { newRect.y += dy; newRect.h -= dy; }
-    }
-
-    if (newRect.w < 50) newRect.w = 50;
-    if (newRect.h < 50) newRect.h = 50;
-    if (newRect.x < 0) newRect.x = 0;
-    if (newRect.y < 0) newRect.y = 0;
-    if (newRect.x + newRect.w > maxWidth) newRect.w = maxWidth - newRect.x;
-    if (newRect.y + newRect.h > maxHeight) newRect.h = maxHeight - newRect.y;
-
-    setCropRect(newRect);
-    dragStart.current = { x: e.clientX, y: e.clientY, type: dragStart.current.type };
+  // --- Drawing Logic ---
+  const getCanvasCoords = (e: React.MouseEvent | React.TouchEvent) => {
+      if (!drawingCanvasRef.current) return { x: 0, y: 0 };
+      const rect = drawingCanvasRef.current.getBoundingClientRect();
+      const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
+      const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
+      const scaleX = drawingCanvasRef.current.width / rect.width;
+      const scaleY = drawingCanvasRef.current.height / rect.height;
+      return {
+          x: (clientX - rect.left) * scaleX,
+          y: (clientY - rect.top) * scaleY
+      };
   };
 
-  const handleMouseUp = () => {
-    dragStart.current = null;
+  const startDrawing = (e: React.MouseEvent | React.TouchEvent) => {
+      if (mode !== 'draw') return;
+      e.preventDefault(); // Prevent scrolling
+      setIsDrawing(true);
+      const ctx = drawingCanvasRef.current?.getContext('2d');
+      if (ctx) {
+          const { x, y } = getCanvasCoords(e);
+          ctx.beginPath();
+          ctx.moveTo(x, y);
+          ctx.strokeStyle = drawColor;
+          ctx.lineWidth = drawWidth * (drawingCanvasRef.current!.width / 1000); // Scale width relative to image size
+          ctx.lineCap = 'round';
+          ctx.lineJoin = 'round';
+      }
   };
+
+  const draw = (e: React.MouseEvent | React.TouchEvent) => {
+      if (!isDrawing || mode !== 'draw') return;
+      e.preventDefault();
+      const ctx = drawingCanvasRef.current?.getContext('2d');
+      if (ctx) {
+          const { x, y } = getCanvasCoords(e);
+          ctx.lineTo(x, y);
+          ctx.stroke();
+      }
+  };
+
+  const stopDrawing = () => {
+      setIsDrawing(false);
+      const ctx = drawingCanvasRef.current?.getContext('2d');
+      ctx?.closePath();
+  };
+
 
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="bg-zinc-900 border border-zinc-800 rounded-xl shadow-2xl w-[90vw] h-[90vh] max-w-5xl flex flex-col overflow-hidden">
+    <div className="fixed inset-0 z-50 flex flex-col bg-zinc-950 animate-in fade-in duration-200">
         
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-800 bg-zinc-900/50">
-          <h2 className="text-white font-medium">Edit Image</h2>
-          <div className="flex gap-2">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800 bg-zinc-900 z-10">
+          <button 
+              onClick={onClose}
+              className="p-2 -ml-2 rounded-full hover:bg-zinc-800 text-zinc-400 hover:text-white transition-colors"
+          >
+              <X size={24} />
+          </button>
+          <div className="flex items-center gap-4">
             <button 
                 onClick={handleReset}
-                className="p-2 rounded-full hover:bg-zinc-800 text-zinc-400 hover:text-white transition-colors flex items-center gap-1 text-xs"
-                title="Reset Changes"
+                className="text-xs font-medium text-zinc-500 hover:text-zinc-300 uppercase tracking-wide"
             >
-                <RotateCcw size={16} />
-                <span className="hidden sm:inline">Reset</span>
+                Reset
             </button>
-            <div className="w-px h-6 bg-zinc-800 mx-2" />
             <button 
-                onClick={onClose}
-                className="p-2 rounded-full hover:bg-zinc-800 text-zinc-400 hover:text-white transition-colors"
+                onClick={handleSave}
+                className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white px-4 py-1.5 rounded-full font-medium text-sm transition-all shadow-lg active:scale-95"
             >
-                <X size={20} />
+                <Check size={16} />
+                Save
             </button>
           </div>
         </div>
 
-        {/* Main Workspace */}
-        <div 
-            className="flex-1 relative bg-black flex items-center justify-center overflow-hidden select-none"
-            onMouseMove={mode === 'crop' ? handleMouseMove : undefined}
-            onMouseUp={mode === 'crop' ? handleMouseUp : undefined}
-            onMouseLeave={mode === 'crop' ? handleMouseUp : undefined}
-        >
-            <div ref={containerRef} className="relative inline-block">
+        {/* Workspace */}
+        <div className="flex-1 relative bg-black flex items-center justify-center overflow-hidden select-none touch-none">
+            <div 
+                ref={containerRef} 
+                className="relative inline-block shadow-2xl"
+                style={{ 
+                    transform: `rotate(${rotation}deg)`,
+                    transition: isDrawing ? 'none' : 'transform 0.3s ease'
+                }}
+            >
                 <img 
                     ref={imageRef}
                     src={item.url} 
                     alt="Edit preview" 
-                    className="max-h-[70vh] max-w-full object-contain transition-all duration-300"
+                    className="max-h-[50vh] md:max-h-[65vh] max-w-[95vw] md:max-w-4xl object-contain"
                     style={{
-                        transform: `rotate(${rotation}deg)`,
-                        filter: `brightness(${filters.brightness}%) contrast(${filters.contrast}%)`
+                        filter: `brightness(${filters.brightness}%) contrast(${filters.contrast}%) saturate(${filters.saturation}%) hue-rotate(${filters.hue}deg) blur(${filters.blur}px) sepia(${filters.sepia}%)`
                     }}
                     draggable={false}
                 />
                 
+                {/* Drawing Overlay */}
+                <canvas 
+                    ref={drawingCanvasRef}
+                    className={`absolute inset-0 w-full h-full ${mode === 'draw' ? 'cursor-crosshair pointer-events-auto' : 'pointer-events-none'}`}
+                    onMouseDown={startDrawing}
+                    onMouseMove={draw}
+                    onMouseUp={stopDrawing}
+                    onTouchStart={startDrawing}
+                    onTouchMove={draw}
+                    onTouchEnd={stopDrawing}
+                />
+
                 {/* Crop Overlay */}
-                {mode === 'crop' && cropRect && (
+                {mode === 'crop' && (
                     <div 
-                        className="absolute border-2 border-white shadow-[0_0_0_9999px_rgba(0,0,0,0.5)] cursor-move"
-                        style={{
-                            left: cropRect.x,
-                            top: cropRect.y,
-                            width: cropRect.w,
-                            height: cropRect.h,
-                        }}
-                        onMouseDown={(e) => handleMouseDown(e, 'move')}
+                        className="absolute inset-0 pointer-events-none"
                     >
-                        {/* Grid of thirds */}
-                        <div className="absolute inset-0 grid grid-cols-3 grid-rows-3 pointer-events-none opacity-50">
-                             <div className="border-r border-b border-white/30"></div>
-                             <div className="border-r border-b border-white/30"></div>
-                             <div className="border-b border-white/30"></div>
-                             <div className="border-r border-b border-white/30"></div>
-                             <div className="border-r border-b border-white/30"></div>
-                             <div className="border-b border-white/30"></div>
-                             <div className="border-r border-white/30"></div>
-                             <div className="border-r border-white/30"></div>
-                             <div></div>
+                         {/* Darken outside area */}
+                         <div className="absolute inset-0 bg-black/50" 
+                              style={{ 
+                                  clipPath: `polygon(
+                                      0% 0%, 0% 100%, 
+                                      ${crop.x * 100}% 100%, ${crop.x * 100}% ${crop.y * 100}%, 
+                                      ${(crop.x + crop.width) * 100}% ${crop.y * 100}%, ${(crop.x + crop.width) * 100}% ${(crop.y + crop.height) * 100}%, 
+                                      ${crop.x * 100}% ${(crop.y + crop.height) * 100}%, ${crop.x * 100}% 100%, 
+                                      100% 100%, 100% 0%
+                                  )` 
+                               }} 
+                        />
+                         
+                         {/* Selection Box */}
+                         <div 
+                            className="absolute border border-white/80 shadow-[0_0_0_1px_rgba(0,0,0,0.5)] pointer-events-auto cursor-move"
+                            style={{
+                                left: `${crop.x * 100}%`,
+                                top: `${crop.y * 100}%`,
+                                width: `${crop.width * 100}%`,
+                                height: `${crop.height * 100}%`,
+                            }}
+                            onMouseDown={(e) => handleCropDown(e, 'move')}
+                            onTouchStart={(e) => handleCropDown(e, 'move')}
+                        >
+                            {/* Grid Lines */}
+                            <div className="absolute inset-0 grid grid-cols-3 grid-rows-3 pointer-events-none opacity-30">
+                                <div className="border-r border-b border-white"></div>
+                                <div className="border-r border-b border-white"></div>
+                                <div className="border-b border-white"></div>
+                                <div className="border-r border-b border-white"></div>
+                                <div className="border-r border-b border-white"></div>
+                                <div className="border-b border-white"></div>
+                                <div className="border-r border-white"></div>
+                                <div className="border-r border-white"></div>
+                                <div></div>
+                            </div>
+                            
+                            {/* Handles - Larger touch targets */}
+                            {['nw', 'ne', 'sw', 'se', 'n', 'e', 's', 'w'].map(h => (
+                                <div 
+                                    key={h}
+                                    className={`absolute w-6 h-6 flex items-center justify-center
+                                        ${h.includes('n') ? '-top-3' : h.includes('s') ? '-bottom-3' : 'top-1/2 -translate-y-1/2'}
+                                        ${h.includes('w') ? '-left-3' : h.includes('e') ? '-right-3' : 'left-1/2 -translate-x-1/2'}
+                                        cursor-${h}-resize
+                                    `}
+                                    onMouseDown={(e) => handleCropDown(e, h)}
+                                    onTouchStart={(e) => handleCropDown(e, h)}
+                                >
+                                    <div className="w-2.5 h-2.5 bg-white rounded-full shadow-sm border border-black/20" />
+                                </div>
+                            ))}
                         </div>
-
-                        {/* Handles */}
-                        <div className="absolute -top-1.5 -left-1.5 w-3 h-3 bg-white cursor-nw-resize" onMouseDown={(e) => handleMouseDown(e, 'nw')}/>
-                        <div className="absolute -top-1.5 -right-1.5 w-3 h-3 bg-white cursor-ne-resize" onMouseDown={(e) => handleMouseDown(e, 'ne')}/>
-                        <div className="absolute -bottom-1.5 -left-1.5 w-3 h-3 bg-white cursor-sw-resize" onMouseDown={(e) => handleMouseDown(e, 'sw')}/>
-                        <div className="absolute -bottom-1.5 -right-1.5 w-3 h-3 bg-white cursor-se-resize" onMouseDown={(e) => handleMouseDown(e, 'se')}/>
                     </div>
                 )}
             </div>
         </div>
 
-        {/* Footer / Controls */}
-        <div className="px-6 py-6 border-t border-zinc-800 bg-zinc-900 flex flex-col gap-4">
+        {/* Controls Container */}
+        <div className="bg-zinc-900 border-t border-zinc-800 flex flex-col md:flex-row h-[40vh] md:h-auto overflow-hidden">
             
-            <div className="flex items-center justify-between gap-8">
-                {/* Mode Toggles */}
-                <div className="flex bg-zinc-800 rounded-lg p-1 gap-1">
-                    <button 
-                        onClick={() => setMode('adjust')}
-                        className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${mode === 'adjust' ? 'bg-zinc-700 text-white shadow-sm' : 'text-zinc-400 hover:text-white'}`}
+            {/* Mode Selector - Horizontal on all screens */}
+            <div className="flex md:flex-col shrink-0 border-b md:border-b-0 md:border-r border-zinc-800 overflow-x-auto md:overflow-visible">
+                {[
+                    { id: 'adjust', icon: <SliderIcon />, label: 'Adjust' },
+                    { id: 'crop', icon: <CropIcon size={20} />, label: 'Crop' },
+                    { id: 'draw', icon: <Pencil size={20} />, label: 'Draw' },
+                ].map((m) => (
+                    <button
+                        key={m.id}
+                        onClick={() => setMode(m.id as any)}
+                        className={`flex flex-col items-center justify-center px-6 py-3 md:px-4 md:py-6 gap-1 min-w-[80px] transition-colors
+                            ${mode === m.id ? 'bg-zinc-800 text-blue-400' : 'text-zinc-500 hover:text-zinc-300'}
+                        `}
                     >
-                        Adjust
+                        {m.icon}
+                        <span className="text-[10px] font-medium uppercase">{m.label}</span>
                     </button>
-                    <button 
-                        onClick={() => setMode('crop')}
-                        className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${mode === 'crop' ? 'bg-zinc-700 text-white shadow-sm' : 'text-zinc-400 hover:text-white'}`}
-                    >
-                        Crop
-                    </button>
-                </div>
-
-                {/* Sliders for Adjust Mode */}
-                {mode === 'adjust' && (
-                    <div className="flex-1 grid grid-cols-2 gap-8 animate-in fade-in slide-in-from-bottom-2">
-                        <Slider 
-                            label="Brightness" 
-                            value={filters.brightness} 
-                            min={0} 
-                            max={200} 
-                            onChange={(v) => setFilters(prev => ({...prev, brightness: v}))} 
-                            icon={<Sun size={14} />}
-                        />
-                        <Slider 
-                            label="Contrast" 
-                            value={filters.contrast} 
-                            min={0} 
-                            max={200} 
-                            onChange={(v) => setFilters(prev => ({...prev, contrast: v}))} 
-                            icon={<Contrast size={14} />}
-                        />
-                    </div>
-                )}
-
-                {/* Controls for Crop Mode */}
-                 {mode === 'crop' && (
-                    <div className="flex-1 flex items-center justify-center text-zinc-400 text-sm animate-in fade-in slide-in-from-bottom-2">
-                        <CropIcon size={16} className="mr-2"/>
-                        Drag corners to crop
-                    </div>
-                 )}
-
-                {/* Rotate Button */}
-                <button 
-                    onClick={handleRotate}
-                    className="p-3 bg-zinc-800 hover:bg-zinc-700 rounded-lg text-white transition-colors"
-                    title="Rotate 90 degrees"
-                >
-                    <RotateCw size={20} />
-                </button>
+                ))}
             </div>
 
-            <div className="flex justify-end pt-2">
-                <button 
-                    onClick={handleSave}
-                    disabled={isProcessing}
-                    className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 disabled:bg-blue-600/50 text-white px-6 py-2.5 rounded-lg font-medium transition-all shadow-lg hover:shadow-blue-500/20 active:scale-95"
-                >
-                    {isProcessing ? 'Saving...' : (
-                        <>
-                            <Check size={18} />
-                            Done
-                        </>
+            {/* Tool Options - Scrollable Content */}
+            <div className="flex-1 overflow-y-auto p-6 scrollbar-hide">
+                <div className="max-w-md mx-auto space-y-6 pb-8 md:pb-0">
+                    
+                    {mode === 'adjust' && (
+                        <div className="flex flex-col gap-6 animate-in slide-in-from-bottom-4 fade-in">
+                            <h3 className="text-sm font-medium text-zinc-400 mb-2">Color & Light</h3>
+                            <Slider label="Brightness" value={filters.brightness} min={0} max={200} onChange={v => setFilters(p => ({...p, brightness: v}))} icon={<Sun size={14} />} />
+                            <Slider label="Contrast" value={filters.contrast} min={0} max={200} onChange={v => setFilters(p => ({...p, contrast: v}))} icon={<Contrast size={14} />} />
+                            <Slider label="Saturation" value={filters.saturation} min={0} max={200} onChange={v => setFilters(p => ({...p, saturation: v}))} icon={<Droplet size={14} />} />
+                            
+                            <h3 className="text-sm font-medium text-zinc-400 mt-4 mb-2">Effects</h3>
+                            <Slider label="Hue" value={filters.hue} min={0} max={360} onChange={v => setFilters(p => ({...p, hue: v}))} icon={<Palette size={14} />} />
+                            <Slider label="Blur" value={filters.blur} min={0} max={20} onChange={v => setFilters(p => ({...p, blur: v}))} icon={<Droplet size={14} />} />
+                            <Slider label="Sepia" value={filters.sepia} min={0} max={100} onChange={v => setFilters(p => ({...p, sepia: v}))} icon={<Palette size={14} />} />
+                        </div>
                     )}
-                </button>
+
+                    {mode === 'crop' && (
+                        <div className="flex flex-col gap-6 animate-in slide-in-from-bottom-4 fade-in items-center">
+                            <p className="text-sm text-zinc-500 text-center mb-4">
+                                Drag corner handles to crop.<br/>Image will snap to grid layout.
+                            </p>
+                            <div className="flex gap-4">
+                                <button 
+                                    onClick={() => setRotation((r) => r - 90)}
+                                    className="flex flex-col items-center gap-2 p-4 bg-zinc-800 rounded-lg hover:bg-zinc-700 active:scale-95 transition-all w-24"
+                                >
+                                    <RotateCcw size={24} />
+                                    <span className="text-xs text-zinc-400">-90°</span>
+                                </button>
+                                <button 
+                                    onClick={() => setRotation((r) => r + 90)}
+                                    className="flex flex-col items-center gap-2 p-4 bg-zinc-800 rounded-lg hover:bg-zinc-700 active:scale-95 transition-all w-24"
+                                >
+                                    <RotateCw size={24} />
+                                    <span className="text-xs text-zinc-400">+90°</span>
+                                </button>
+                            </div>
+                        </div>
+                    )}
+
+                    {mode === 'draw' && (
+                        <div className="flex flex-col gap-6 animate-in slide-in-from-bottom-4 fade-in">
+                            <div>
+                                <label className="text-xs text-zinc-500 mb-2 block uppercase font-medium">Color</label>
+                                <div className="flex gap-3 flex-wrap">
+                                    {['#ef4444', '#f97316', '#eab308', '#22c55e', '#3b82f6', '#a855f7', '#ec4899', '#ffffff', '#000000'].map(c => (
+                                        <button 
+                                            key={c}
+                                            onClick={() => setDrawColor(c)}
+                                            className={`w-8 h-8 rounded-full border-2 transition-transform hover:scale-110 ${drawColor === c ? 'border-white scale-110' : 'border-transparent'}`}
+                                            style={{ backgroundColor: c }}
+                                        />
+                                    ))}
+                                </div>
+                            </div>
+                            
+                            <Slider label="Brush Size" value={drawWidth} min={1} max={20} onChange={setDrawWidth} icon={<Pencil size={14} />} />
+                            
+                            <div className="flex justify-center pt-4">
+                                <button 
+                                    onClick={() => {
+                                        setDrawingDataUrl(undefined);
+                                        const ctx = drawingCanvasRef.current?.getContext('2d');
+                                        if (ctx && drawingCanvasRef.current) ctx.clearRect(0,0, drawingCanvasRef.current.width, drawingCanvasRef.current.height);
+                                    }}
+                                    className="text-red-400 text-sm flex items-center gap-2 hover:bg-red-500/10 px-4 py-2 rounded-lg"
+                                >
+                                    <Eraser size={16} /> Clear Drawing
+                                </button>
+                            </div>
+                        </div>
+                    )}
+                </div>
             </div>
         </div>
-
-      </div>
     </div>
   );
 };
+
+const SliderIcon = () => (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <line x1="4" x2="20" y1="21" y2="21" />
+        <polygon points="4 18.5 12 18.5 12 5.5 20 5.5 20 2.5 12 2.5 12 5.5 4 5.5 4 18.5" opacity="0.5"/> {/* Abstract slider-ish icon */}
+        <circle cx="12" cy="12" r="3" />
+        <line x1="4" y1="12" x2="20" y2="12" />
+    </svg>
+);

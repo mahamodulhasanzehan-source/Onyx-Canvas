@@ -71,7 +71,14 @@ export const useFileProcessor = (items: CanvasItem[]) => {
           originalHeight: height,
           rotation: 0,
           name: fileName.split('.')[0] || 'Untitled',
-          filters: { brightness: 100, contrast: 100 },
+          filters: { 
+            brightness: 100, 
+            contrast: 100,
+            saturation: 100,
+            hue: 0,
+            blur: 0,
+            sepia: 0
+          },
           zIndex: Date.now()
         });
 

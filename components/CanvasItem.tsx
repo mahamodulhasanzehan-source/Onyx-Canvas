@@ -68,34 +68,19 @@ export const CanvasItem: React.FC<CanvasItemProps> = memo(({
   };
 
   const handleTouchStart = (e: React.TouchEvent) => {
-    // We must invoke the hook's mouse down logic which handles the propagation logic
-    // But since touch is different, we replicate the logic or adapt it.
-    // Actually, useItemInteraction doesn't expose a specific touch handler, so we mimic handleMouseDown
-    
-    // Pass event to "MouseDown" handler logic for selection/drag state
-    // But we need to convert touch event to something compatible or call the logic directly.
-    // The hook attaches window listeners for move/up, but we need to initialize the state.
-    
-    // However, react onTouchStart is passive?
-    // Let's rely on handleMouseDown logic inside the hook which accepts React.MouseEvent.
-    // We'll cast strictly for the logic reuse or pass coordinates.
-    // The hook logic uses clientX/Y.
-    
     const touch = e.touches[0];
     const mockEvent = {
         button: 0,
         clientX: touch.clientX,
         clientY: touch.clientY,
         stopPropagation: () => e.stopPropagation(),
-        preventDefault: () => {} // Don't prevent default on start or scrolling breaks
+        preventDefault: () => {} 
     } as unknown as React.MouseEvent;
 
     handleMouseDown(mockEvent);
 
-    // Context Menu Logic (Long Press)
     touchStartPos.current = { x: touch.clientX, y: touch.clientY };
     touchTimer.current = setTimeout(() => {
-      // REQUIREMENT: Only show context menu on long press if the item is ALREADY selected.
       if (isSelected) {
           if (navigator.vibrate) navigator.vibrate(50);
           onContextMenu({ clientX: touch.clientX, clientY: touch.clientY }, item.id);
@@ -105,7 +90,6 @@ export const CanvasItem: React.FC<CanvasItemProps> = memo(({
   };
 
   const handleTouchMove = (e: React.TouchEvent) => {
-    // Cancel long press on move
     if (touchStartPos.current) {
       const touch = e.touches[0];
       const dx = Math.abs(touch.clientX - touchStartPos.current.x);
@@ -142,6 +126,24 @@ export const CanvasItem: React.FC<CanvasItemProps> = memo(({
 
   const transitionClass = (isDragging || isResizing) ? 'duration-0' : 'duration-300';
 
+  // --- Non-destructive Crop Logic ---
+  // Default to full image if no crop
+  const crop = item.crop || { x: 0, y: 0, width: 1, height: 1 };
+  
+  // Calculate the dimensions of the inner image needed to fill the crop window
+  // If crop.width is 0.5 (half image), the inner image needs to be 200% of the container width.
+  const innerWidthPercent = (1 / crop.width) * 100;
+  const innerHeightPercent = (1 / crop.height) * 100;
+  
+  const filterString = `
+    brightness(${item.filters.brightness}%) 
+    contrast(${item.filters.contrast}%) 
+    saturate(${item.filters.saturation ?? 100}%) 
+    hue-rotate(${item.filters.hue ?? 0}deg) 
+    blur(${item.filters.blur ?? 0}px)
+    sepia(${item.filters.sepia ?? 0}%)
+  `;
+
   return (
     <div
       className={`canvas-item absolute group select-none animate-in fade-in zoom-in-95 ${transitionClass} ${isSelected ? 'z-20' : 'z-10'}`}
@@ -161,18 +163,43 @@ export const CanvasItem: React.FC<CanvasItemProps> = memo(({
         onContextMenu(e, item.id);
       }}
     >
-      <div className={`w-full h-full relative transition-all ${transitionClass} bg-zinc-900 ${isSelected ? 'ring-2 ring-blue-500 shadow-[0_0_30px_rgba(59,130,246,0.3)]' : 'hover:ring-1 hover:ring-white/50 hover:shadow-lg'}`}>
+      <div className={`w-full h-full relative overflow-hidden transition-all ${transitionClass} bg-zinc-900 ${isSelected ? 'ring-2 ring-blue-500 shadow-[0_0_30px_rgba(59,130,246,0.3)]' : 'hover:ring-1 hover:ring-white/50 hover:shadow-lg'}`}>
         {item.url ? (
-          <img
-            src={item.url}
-            alt={item.name}
-            className="w-full h-full object-fill pointer-events-none select-none block"
-            style={{
-              filter: `brightness(${item.filters.brightness}%) contrast(${item.filters.contrast}%)`,
-              transform: `rotate(${item.rotation}deg)`
-            }}
-            draggable={false}
-          />
+          <div className="w-full h-full relative overflow-hidden">
+            {/* Inner Content Wrapper for Crop */}
+            <div 
+                className="absolute origin-top-left"
+                style={{
+                    width: `${innerWidthPercent}%`,
+                    height: `${innerHeightPercent}%`,
+                    left: `${-(crop.x / crop.width) * 100}%`,
+                    top: `${-(crop.y / crop.height) * 100}%`,
+                }}
+            >
+                {/* Main Image */}
+                <img
+                    src={item.url}
+                    alt={item.name}
+                    className="absolute inset-0 w-full h-full object-fill pointer-events-none block"
+                    style={{
+                        filter: filterString,
+                        transform: `rotate(${item.rotation}deg)`
+                    }}
+                    draggable={false}
+                />
+                
+                {/* Drawing Layer - No filters, no rotation? Or should it rotate with image? Usually rotates with image. */}
+                {item.drawingUrl && (
+                    <img 
+                        src={item.drawingUrl}
+                        className="absolute inset-0 w-full h-full object-fill pointer-events-none block z-10"
+                        style={{
+                            transform: `rotate(${item.rotation}deg)`
+                        }}
+                    />
+                )}
+            </div>
+          </div>
         ) : (
           <div className="w-full h-full flex flex-col items-center justify-center text-zinc-600 p-2">
             <ImageOff size={24} />
@@ -182,10 +209,10 @@ export const CanvasItem: React.FC<CanvasItemProps> = memo(({
 
         {isSelected && (
           <>
-            <div style={{ width: handleSize, height: handleSize, top: handleOffset, left: handleOffset }} className="absolute bg-blue-500 rounded-full cursor-nw-resize hover:scale-150 transition-transform shadow-sm animate-in fade-in zoom-in duration-200" onMouseDown={(e) => handleResizeStart(e, 'nw')} />
-            <div style={{ width: handleSize, height: handleSize, top: handleOffset, right: handleOffset }} className="absolute bg-blue-500 rounded-full cursor-ne-resize hover:scale-150 transition-transform shadow-sm animate-in fade-in zoom-in duration-200" onMouseDown={(e) => handleResizeStart(e, 'ne')} />
-            <div style={{ width: handleSize, height: handleSize, bottom: handleOffset, left: handleOffset }} className="absolute bg-blue-500 rounded-full cursor-sw-resize hover:scale-150 transition-transform shadow-sm animate-in fade-in zoom-in duration-200" onMouseDown={(e) => handleResizeStart(e, 'sw')} />
-            <div style={{ width: handleSize, height: handleSize, bottom: handleOffset, right: handleOffset }} className="absolute bg-blue-500 rounded-full cursor-se-resize hover:scale-150 transition-transform shadow-sm animate-in fade-in zoom-in duration-200" onMouseDown={(e) => handleResizeStart(e, 'se')} />
+            <div style={{ width: handleSize, height: handleSize, top: handleOffset, left: handleOffset }} className="absolute bg-blue-500 rounded-full cursor-nw-resize hover:scale-150 transition-transform shadow-sm z-50" onMouseDown={(e) => handleResizeStart(e, 'nw')} />
+            <div style={{ width: handleSize, height: handleSize, top: handleOffset, right: handleOffset }} className="absolute bg-blue-500 rounded-full cursor-ne-resize hover:scale-150 transition-transform shadow-sm z-50" onMouseDown={(e) => handleResizeStart(e, 'ne')} />
+            <div style={{ width: handleSize, height: handleSize, bottom: handleOffset, left: handleOffset }} className="absolute bg-blue-500 rounded-full cursor-sw-resize hover:scale-150 transition-transform shadow-sm z-50" onMouseDown={(e) => handleResizeStart(e, 'sw')} />
+            <div style={{ width: handleSize, height: handleSize, bottom: handleOffset, right: handleOffset }} className="absolute bg-blue-500 rounded-full cursor-se-resize hover:scale-150 transition-transform shadow-sm z-50" onMouseDown={(e) => handleResizeStart(e, 'se')} />
           </>
         )}
       </div>

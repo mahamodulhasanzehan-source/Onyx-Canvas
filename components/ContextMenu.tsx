@@ -1,11 +1,12 @@
 import React, { useEffect, useRef } from 'react';
-import { Download, Edit2, Trash2, Plus, ImagePlus } from 'lucide-react';
+import { Download, Edit2, Trash2, ImagePlus, PenTool } from 'lucide-react';
 
 interface ContextMenuProps {
   x: number;
   y: number;
   itemId?: string;
   onRename: () => void;
+  onEdit: () => void;
   onDelete: () => void;
   onDownload?: () => void;
   onAddImage?: () => void;
@@ -17,6 +18,7 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
   y, 
   itemId, 
   onRename, 
+  onEdit,
   onDelete, 
   onDownload, 
   onAddImage, 
@@ -45,7 +47,7 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
   return (
     <div 
       ref={ref}
-      className="fixed z-50 bg-zinc-900 border border-zinc-800 rounded-lg shadow-xl py-1 w-40 flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200 origin-top-left"
+      className="fixed z-50 bg-zinc-900 border border-zinc-800 rounded-lg shadow-xl py-1 w-44 flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200 origin-top-left"
       style={style}
       onContextMenu={(e) => e.preventDefault()}
     >
@@ -61,6 +63,14 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
       ) : (
         // Item Context Menu
         <>
+            <button 
+                onClick={() => { onEdit(); onClose(); }}
+                className="text-left px-4 py-2.5 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors flex items-center gap-2 group"
+            >
+                <PenTool size={14} className="group-hover:text-blue-400 transition-colors" />
+                Edit
+            </button>
+
             <button 
                 onClick={() => { onRename(); onClose(); }}
                 className="text-left px-4 py-2.5 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors flex items-center gap-2 group"

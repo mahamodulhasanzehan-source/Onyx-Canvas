@@ -5,14 +5,12 @@ import { EditModal } from './components/EditModal';
 import { NavigationControls } from './components/NavigationControls';
 import { Sidebar } from './components/Sidebar';
 import { ContextMenu } from './components/ContextMenu';
-import { CanvasItem, ImageFilters, ContextMenuState } from './types';
+import { CanvasItem, ContextMenuState } from './types';
 import { distance } from './utils/geometry';
-import { compressImage } from './utils/imageProcessing';
-import { Loader2 } from 'lucide-react';
-
 import { useCanvasData } from './hooks/useCanvasData';
 import { useFileProcessor } from './hooks/useFileProcessor';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
+import { Loader2 } from 'lucide-react';
 
 const App: React.FC = () => {
   const { items, setItems, isInitializing, updateItem, deleteItem } = useCanvasData();
@@ -20,7 +18,6 @@ const App: React.FC = () => {
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
-  // Snap is always enabled now
   const [snapEnabled] = useState(true);
   const [itemToEdit, setItemToEdit] = useState<CanvasItem | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -29,7 +26,6 @@ const App: React.FC = () => {
   const canvasRef = useRef<CanvasHandle>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Keyboard Hooks
   useKeyboardShortcuts({
     selectedId,
     renamingId,
@@ -62,7 +58,6 @@ const App: React.FC = () => {
     fileInputRef.current?.click();
   };
 
-  // Paste Handling
   useEffect(() => {
     const handlePaste = async (e: ClipboardEvent) => {
       if (renamingId) return;
@@ -90,18 +85,9 @@ const App: React.FC = () => {
     return () => window.removeEventListener('paste', handlePaste);
   }, [renamingId, handleDropFiles]);
 
-  const handleEditSave = async (id: string, newBlob: Blob, newFilters: ImageFilters, newRotation: number) => {
+  const handleEditSave = async (id: string, updates: Partial<CanvasItem>) => {
     try {
-      const { base64, width, height } = await compressImage(newBlob);
-      await updateItem(id, {
-        url: base64,
-        width,
-        height,
-        filters: newFilters,
-        rotation: 0,
-        originalWidth: width,
-        originalHeight: height,
-      });
+      await updateItem(id, updates);
     } catch (e) {
       console.error("Failed to save edit", e);
       alert("Failed to save changes.");
@@ -289,6 +275,11 @@ const App: React.FC = () => {
           x={contextMenu.x}
           y={contextMenu.y}
           itemId={contextMenu.itemId}
+          onEdit={() => {
+              const item = items.find(i => i.id === contextMenu.itemId);
+              if (item) setItemToEdit(item);
+              setContextMenu(p => ({ ...p, isOpen: false }));
+          }}
           onRename={() => { setRenamingId(contextMenu.itemId); setContextMenu(p => ({ ...p, isOpen: false })); }}
           onDelete={() => { handleDeleteSelection(contextMenu.itemId); setContextMenu(prev => ({ ...prev, isOpen: false })); }}
           onDownload={handleDownload}
