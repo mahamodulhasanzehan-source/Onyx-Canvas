@@ -25,6 +25,10 @@ export const useItemInteraction = ({
 }: ItemInteractionConfig) => {
   const [localState, setLocalState] = useState<Partial<CanvasItem> | null>(null);
   const [isDragging, setIsDragging] = useState(false);
+  
+  // New state to track if we are checking for a tap on an unselected item
+  const [isTapCheck, setIsTapCheck] = useState(false);
+  
   const [dragStart, setDragStart] = useState<Point | null>(null);
   const [isResizing, setIsResizing] = useState(false);
   const [resizeStart, setResizeStart] = useState<{
@@ -38,30 +42,25 @@ export const useItemInteraction = ({
   const scaleRef = useRef(scale);
   scaleRef.current = scale;
   
-  // Track state for click-to-deselect
+  // Track movement to distinguish click vs drag
   const hasMovedRef = useRef(false);
-  const wasSelectedRef = useRef(false);
 
   const handleMouseDown = (e: React.MouseEvent) => {
     if (e.button !== 0) return;
-    e.stopPropagation();
     
-    // Store initial state
-    wasSelectedRef.current = isSelected;
     hasMovedRef.current = false;
+    setDragStart({ x: e.clientX, y: e.clientY });
 
-    // If NOT selected, select immediately so visual feedback is instant
-    if (!isSelected) {
-      onSelect(item.id);
-    }
-    // If ALREADY selected, we wait until MouseUp to decide if we should deselect (toggle),
-    // because the user might be starting a drag.
-
-    if (!isRenaming) {
+    if (isSelected && !isRenaming) {
+      // SELECTED: Stop propagation (prevent pan), start dragging item
+      e.stopPropagation();
       setIsDragging(true);
-      setDragStart({ x: e.clientX, y: e.clientY });
       initialDragItemRef.current = { ...item };
       setLocalState({ x: item.x, y: item.y });
+    } else if (!isSelected) {
+      // UNSELECTED: Allow propagation (enable pan), start tap check
+      // Do NOT setIsDragging(true)
+      setIsTapCheck(true);
     }
   };
 
@@ -84,18 +83,25 @@ export const useItemInteraction = ({
 
   useEffect(() => {
     const handleGlobalMove = (e: MouseEvent) => {
+      if (!dragStart) return;
+
       const currentScale = scaleRef.current;
       const startItem = initialDragItemRef.current;
       const gridSize = 40;
-      if (!startItem) return;
 
-      if (isDragging && dragStart) {
-        // Check if we moved enough to consider it a drag
-        const dist = Math.hypot(e.clientX - dragStart.x, e.clientY - dragStart.y);
-        if (dist > 3) {
-            hasMovedRef.current = true;
-        }
+      // Check for movement threshold
+      const dist = Math.hypot(e.clientX - dragStart.x, e.clientY - dragStart.y);
+      if (dist > 3) {
+          hasMovedRef.current = true;
+          
+          // If we were checking for a tap on an unselected item, and we moved, 
+          // it's a pan. Cancel the tap check so we don't select on release.
+          if (isTapCheck) {
+            setIsTapCheck(false);
+          }
+      }
 
+      if (isDragging && startItem) {
         const dx = (e.clientX - dragStart.x) / currentScale;
         const dy = (e.clientY - dragStart.y) / currentScale;
         let newX = startItem.x + dx;
@@ -110,7 +116,7 @@ export const useItemInteraction = ({
         }
       }
 
-      if (isResizing && resizeStart) {
+      if (isResizing && resizeStart && startItem) {
         const dx = (e.clientX - resizeStart.startX) / currentScale;
         const dy = (e.clientY - resizeStart.startY) / currentScale;
         let newW = resizeStart.origW;
@@ -188,36 +194,48 @@ export const useItemInteraction = ({
 
     const handleUp = () => {
       if (isDragging) {
-        // CLICK-TO-DESELECT LOGIC
-        // If we didn't drag, and it was already selected, then toggle it off.
-        if (!hasMovedRef.current && wasSelectedRef.current) {
-             onSelect(null);
+        // Was dragging a selected item
+        if (hasMovedRef.current && localState) {
+          // Moved -> Update position
+          onUpdate(item.id, localState);
+        } else if (!hasMovedRef.current) {
+          // Didn't move -> Toggle off (Deselect)
+          onSelect(null);
         }
-        // If we did drag, save the changes
-        else if (hasMovedRef.current && localState) {
-            onUpdate(item.id, localState);
+      } else if (isTapCheck) {
+        // Was checking for tap on unselected item
+        if (!hasMovedRef.current) {
+          // Didn't move -> Select it
+          onSelect(item.id);
         }
+        // If moved, it was a pan, do nothing (Canvas handled it)
       } else if (isResizing && localState) {
         onUpdate(item.id, localState);
       }
 
       setIsDragging(false);
       setIsResizing(false);
+      setIsTapCheck(false);
       setDragStart(null);
       setResizeStart(null);
       setLocalState(null);
       initialDragItemRef.current = null;
     };
 
-    if (isDragging || isResizing) {
+    if (isDragging || isResizing || isTapCheck) {
       window.addEventListener('mousemove', handleGlobalMove);
       window.addEventListener('mouseup', handleUp);
+      // Also listen for touch events on window to handle the "global move" equivalence for touch
+      window.addEventListener('touchmove', handleGlobalMove as any, { passive: false });
+      window.addEventListener('touchend', handleUp);
     }
     return () => {
       window.removeEventListener('mousemove', handleGlobalMove);
       window.removeEventListener('mouseup', handleUp);
+      window.removeEventListener('touchmove', handleGlobalMove as any);
+      window.removeEventListener('touchend', handleUp);
     };
-  }, [isDragging, isResizing, dragStart, resizeStart, onUpdate, item.id, snapEnabled, localState, items, onSelect]);
+  }, [isDragging, isResizing, isTapCheck, dragStart, resizeStart, onUpdate, item.id, snapEnabled, localState, items, onSelect]);
 
   return {
     localState,

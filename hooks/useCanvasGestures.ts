@@ -111,7 +111,7 @@ export const useCanvasGestures = ({
 
   // Touch Logic
   const handleTouchStart = (e: React.TouchEvent) => {
-    // CRITICAL: If 2 fingers, ALWAYS allow canvas gesture (pinch), ignoring if we touched an item.
+    // If 2 fingers, ALWAYS allow canvas gesture (pinch), ignoring if we touched an item.
     if (e.touches.length === 2) {
       isGestureActiveRef.current = true;
       if (touchTimerRef.current) clearTimeout(touchTimerRef.current);
@@ -125,14 +125,17 @@ export const useCanvasGestures = ({
       return;
     }
 
-    // If 1 finger, we respect the item boundary (let ItemInteraction handle it)
-    if ((e.target as HTMLElement).closest('.canvas-item')) return;
-
+    // Single touch logic
+    // We REMOVED the check for '.canvas-item' here.
+    // If the item is SELECTED, it will stopPropagation, so this won't fire.
+    // If the item is NOT selected, it bubbles here, so we start panning.
     if (e.touches.length === 1) {
       const touch = e.touches[0];
       lastTouchRef.current = { x: touch.clientX, y: touch.clientY };
       touchStartPosRef.current = { x: touch.clientX, y: touch.clientY };
       isGestureActiveRef.current = true;
+      
+      // Long press for Canvas context menu
       touchTimerRef.current = setTimeout(() => {
         if (navigator.vibrate) navigator.vibrate(50);
         onCanvasContextMenu({ clientX: touch.clientX, clientY: touch.clientY });

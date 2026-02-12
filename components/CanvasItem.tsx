@@ -51,7 +51,7 @@ export const CanvasItem: React.FC<CanvasItemProps> = memo(({
   const [nameInput, setNameInput] = useState(item.name);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Long Press Refs
+  // Long Press Refs for Context Menu
   const touchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const touchStartPos = useRef<Point | null>(null);
 
@@ -68,14 +68,34 @@ export const CanvasItem: React.FC<CanvasItemProps> = memo(({
   };
 
   const handleTouchStart = (e: React.TouchEvent) => {
-    const touch = e.touches[0];
-    touchStartPos.current = { x: touch.clientX, y: touch.clientY };
+    // We must invoke the hook's mouse down logic which handles the propagation logic
+    // But since touch is different, we replicate the logic or adapt it.
+    // Actually, useItemInteraction doesn't expose a specific touch handler, so we mimic handleMouseDown
     
+    // Pass event to "MouseDown" handler logic for selection/drag state
+    // But we need to convert touch event to something compatible or call the logic directly.
+    // The hook attaches window listeners for move/up, but we need to initialize the state.
+    
+    // However, react onTouchStart is passive?
+    // Let's rely on handleMouseDown logic inside the hook which accepts React.MouseEvent.
+    // We'll cast strictly for the logic reuse or pass coordinates.
+    // The hook logic uses clientX/Y.
+    
+    const touch = e.touches[0];
+    const mockEvent = {
+        button: 0,
+        clientX: touch.clientX,
+        clientY: touch.clientY,
+        stopPropagation: () => e.stopPropagation(),
+        preventDefault: () => {} // Don't prevent default on start or scrolling breaks
+    } as unknown as React.MouseEvent;
+
+    handleMouseDown(mockEvent);
+
+    // Context Menu Logic (Long Press)
+    touchStartPos.current = { x: touch.clientX, y: touch.clientY };
     touchTimer.current = setTimeout(() => {
       // REQUIREMENT: Only show context menu on long press if the item is ALREADY selected.
-      // This prevents accidental menus when trying to interact or zoom.
-      // Note: If you tap an unselected item, it becomes selected. 
-      // You must lift your finger (tap) then touch and hold again for this to fire.
       if (isSelected) {
           if (navigator.vibrate) navigator.vibrate(50);
           onContextMenu({ clientX: touch.clientX, clientY: touch.clientY }, item.id);
@@ -85,6 +105,7 @@ export const CanvasItem: React.FC<CanvasItemProps> = memo(({
   };
 
   const handleTouchMove = (e: React.TouchEvent) => {
+    // Cancel long press on move
     if (touchStartPos.current) {
       const touch = e.touches[0];
       const dx = Math.abs(touch.clientX - touchStartPos.current.x);
