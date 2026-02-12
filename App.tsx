@@ -20,7 +20,8 @@ const App: React.FC = () => {
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
-  const [snapEnabled, setSnapEnabled] = useState(true);
+  // Snap is always enabled now
+  const [snapEnabled] = useState(true);
   const [itemToEdit, setItemToEdit] = useState<CanvasItem | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [contextMenu, setContextMenu] = useState<ContextMenuState>({ isOpen: false, x: 0, y: 0, itemId: '' });
@@ -270,10 +271,6 @@ const App: React.FC = () => {
       />
 
       <Toolbar
-        snapEnabled={snapEnabled}
-        onToggleSnap={() => setSnapEnabled(!snapEnabled)}
-        hasSelection={!!selectedId}
-        onDeleteSelection={() => handleDeleteSelection()}
         onZoomIn={handleZoomIn}
         onZoomOut={handleZoomOut}
       />

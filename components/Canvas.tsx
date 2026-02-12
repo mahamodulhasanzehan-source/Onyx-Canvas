@@ -77,6 +77,10 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
     onItemUpdate(id, updates);
   }, [onItemUpdate]);
 
+  // Initial grid calculation for first render
+  const gridSize = 40 * scaleState;
+  const gridOffset = gridSize / 2;
+
   return (
     <div
       ref={containerRef}
@@ -96,10 +100,12 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
       {/* Grid Layer */}
       <div id="grid-bg-layer" className="absolute inset-0 pointer-events-none z-0 will-change-[background-position,opacity]"
         style={{
-          backgroundImage: 'radial-gradient(circle, #27272a 1.5px, transparent 1.5px)',
-          backgroundSize: `${40 * scaleState}px ${40 * scaleState}px`,
-          backgroundPosition: '0px 0px',
-          opacity: 0.8
+          // 3px radius = 6px wide dots. Fully opaque (no transparency).
+          backgroundImage: 'radial-gradient(circle, #27272a 3px, transparent 3px)',
+          backgroundSize: `${gridSize}px ${gridSize}px`,
+          // Offset by half grid size to align dots with (0,0) coordinate
+          backgroundPosition: `${-gridOffset}px ${-gridOffset}px`,
+          opacity: 1
         }}
       />
 

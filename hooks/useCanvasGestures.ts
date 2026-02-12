@@ -38,10 +38,12 @@ export const useCanvasGestures = ({
     }
     const gridEl = document.getElementById('grid-bg-layer');
     if (gridEl) {
-      gridEl.style.backgroundPosition = `${x}px ${y}px`;
       const gridSize = 40 * scale;
+      // Shift by half grid size so dots (centers of tiles) align with coordinate origin (0,0)
+      const offset = gridSize / 2;
+      gridEl.style.backgroundPosition = `${x - offset}px ${y - offset}px`;
       gridEl.style.backgroundSize = `${gridSize}px ${gridSize}px`;
-      gridEl.style.opacity = "0.8";
+      gridEl.style.opacity = "1";
     }
   }, [itemsContainerRef, viewportRef]);
 
