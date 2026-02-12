@@ -1,7 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback, useImperativeHandle, forwardRef } from 'react';
 import { CanvasItem as ICanvasItem, LoadingCanvasItem, Viewport } from '../types';
 import { CanvasItem } from './CanvasItem';
-import { snapToGrid } from '../utils/geometry';
 import { Loader2 } from 'lucide-react';
 
 interface CanvasProps {
@@ -16,6 +15,7 @@ interface CanvasProps {
   onDropFiles: (files: File[], x: number, y: number) => void;
   onEditItem: (item: ICanvasItem) => void;
   onContextMenu: (e: React.MouseEvent, id: string) => void;
+  onCanvasContextMenu: (e: React.MouseEvent | { clientX: number, clientY: number }) => void;
   onRenameComplete: (id: string, newName: string) => void;
 }
 
@@ -36,6 +36,7 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
   onDropFiles,
   onEditItem,
   onContextMenu,
+  onCanvasContextMenu,
   onRenameComplete
 }, ref) => {
   const viewportRef = useRef<Viewport>({ x: 0, y: 0, scale: 1 });
@@ -48,6 +49,10 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
   const [isPanning, setIsPanning] = useState(false);
   const lastMousePos = useRef<{x: number, y: number}>({ x: 0, y: 0 });
   const animationFrameRef = useRef<number>(0);
+
+  // Long press refs
+  const touchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const touchStartPosRef = useRef<{x: number, y: number} | null>(null);
 
   // Keep latest items in ref to avoid re-creating handleUpdateItem callback
   const itemsRef = useRef(items);
@@ -123,6 +128,44 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
     }
   };
 
+  // --- Touch Handling (Long Press for Background) ---
+  const handleTouchStart = (e: React.TouchEvent) => {
+      // Don't interfere if touching an item (handled in CanvasItem or bubbling will be stopped)
+      // But we can check event target if needed. 
+      // For now, we rely on CanvasItem stopping propagation for its own long press.
+      
+      const touch = e.touches[0];
+      touchStartPosRef.current = { x: touch.clientX, y: touch.clientY };
+      
+      touchTimerRef.current = setTimeout(() => {
+          // Long press detected on background
+          if (navigator.vibrate) navigator.vibrate(50);
+          onCanvasContextMenu({ clientX: touch.clientX, clientY: touch.clientY });
+          touchStartPosRef.current = null; // Clear to prevent panic logic
+      }, 500); // 500ms threshold
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+      if (touchStartPosRef.current) {
+          const touch = e.touches[0];
+          const dx = Math.abs(touch.clientX - touchStartPosRef.current.x);
+          const dy = Math.abs(touch.clientY - touchStartPosRef.current.y);
+          
+          // If moved more than 10px, cancel long press
+          if (dx > 10 || dy > 10) {
+              if (touchTimerRef.current) clearTimeout(touchTimerRef.current);
+              touchStartPosRef.current = null;
+          }
+      }
+  };
+
+  const handleTouchEnd = () => {
+      if (touchTimerRef.current) {
+          clearTimeout(touchTimerRef.current);
+      }
+      touchStartPosRef.current = null;
+  };
+
   const handleGlobalMouseMove = useCallback((e: MouseEvent) => {
     if (!isPanning) return;
     
@@ -175,32 +218,36 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
   const handleDragOver = (e: React.DragEvent) => e.preventDefault();
 
   const handleUpdateItem = useCallback((id: string, updates: Partial<ICanvasItem>) => {
-      let safeUpdates = { ...updates };
-      if (snapEnabled) {
-          if (safeUpdates.x !== undefined) safeUpdates.x = snapToGrid(safeUpdates.x, 40);
-          if (safeUpdates.y !== undefined) safeUpdates.y = snapToGrid(safeUpdates.y, 40);
-      }
+      // NOTE: We no longer do snapping here because CanvasItem handles it locally
+      // and sends us the final, snapped coordinates on mouse up.
+      // We just pass it through to update state and DB.
 
       const currentItems = itemsRef.current;
       onItemsChange(currentItems.map(item => {
         if (item.id === id) {
-          return { ...item, ...safeUpdates };
+          return { ...item, ...updates };
         }
         return item;
       }));
 
-      onItemUpdate(id, safeUpdates);
+      onItemUpdate(id, updates);
 
-  }, [onItemsChange, onItemUpdate, snapEnabled]); 
+  }, [onItemsChange, onItemUpdate]); 
 
   return (
     <div 
       ref={containerRef}
       className="relative w-full h-screen overflow-hidden bg-canvas-bg cursor-default"
       onMouseDown={handleMouseDown}
+      onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
       onDragOver={handleDragOver}
       onDrop={handleDrop}
-      onContextMenu={(e) => e.preventDefault()} 
+      onContextMenu={(e) => {
+          e.preventDefault();
+          onCanvasContextMenu(e);
+      }} 
     >
       {/* Grid Layer */}
       <div id="grid-bg-layer" className="absolute inset-0 pointer-events-none z-0 will-change-[background-position,opacity]"
@@ -225,6 +272,7 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
                   item={item}
                   isSelected={item.id === selectedId}
                   scale={scaleState}
+                  snapEnabled={snapEnabled}
                   onSelect={onSelectionChange}
                   onUpdate={handleUpdateItem}
                   onEdit={onEditItem}
@@ -263,6 +311,7 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
           <div className="text-zinc-700 text-center animate-in fade-in slide-in-from-bottom-5 duration-700">
             <p className="text-xl font-medium mb-2">Drag & Drop images here</p>
             <p className="text-sm opacity-60">Zoom with wheel. Pan to explore.</p>
+            <p className="text-xs text-zinc-600 mt-2 md:hidden">Long press for options</p>
           </div>
         </div>
       )}

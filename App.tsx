@@ -28,6 +28,7 @@ const App: React.FC = () => {
   const [contextMenu, setContextMenu] = useState<ContextMenuState>({ isOpen: false, x: 0, y: 0, itemId: '' });
 
   const canvasRef = useRef<CanvasHandle>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Subscribe to Firestore
   useEffect(() => {
@@ -105,6 +106,27 @@ const App: React.FC = () => {
       }
     }
   }, []);
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+      if (e.target.files && e.target.files.length > 0 && canvasRef.current) {
+          const viewport = canvasRef.current.getViewport();
+          
+          // Calculate world coordinates from the context menu click position
+          const screenX = contextMenu.x;
+          const screenY = contextMenu.y;
+          const worldX = (screenX - viewport.x) / viewport.scale;
+          const worldY = (screenY - viewport.y) / viewport.scale;
+
+          handleDropFiles(Array.from(e.target.files), worldX, worldY);
+      }
+      // Reset input
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      setContextMenu(prev => ({ ...prev, isOpen: false }));
+  };
+
+  const handleAddImageRequest = () => {
+      fileInputRef.current?.click();
+  };
 
   // Paste Handling
   useEffect(() => {
@@ -265,13 +287,23 @@ const App: React.FC = () => {
       setSelectedId(item.id);
   };
 
-  const handleContextMenu = (e: React.MouseEvent, id: string) => {
-    e.preventDefault();
+  const handleContextMenu = (e: React.MouseEvent | { clientX: number, clientY: number }, id: string) => {
+    if ('preventDefault' in e) e.preventDefault();
     setContextMenu({
       isOpen: true,
       x: e.clientX,
       y: e.clientY,
       itemId: id
+    });
+  };
+
+  const handleCanvasContextMenu = (e: React.MouseEvent | { clientX: number, clientY: number }) => {
+    if ('preventDefault' in e) e.preventDefault();
+    setContextMenu({
+        isOpen: true,
+        x: e.clientX,
+        y: e.clientY,
+        itemId: '' // Empty string implies canvas context
     });
   };
 
@@ -330,6 +362,16 @@ const App: React.FC = () => {
 
   return (
     <>
+      {/* Hidden file input for "New" option */}
+      <input 
+        type="file" 
+        ref={fileInputRef} 
+        className="hidden" 
+        accept="image/*" 
+        multiple 
+        onChange={handleFileSelect}
+      />
+
       <NavigationControls 
           onFindClosest={handleFindClosest} 
           onToggleSidebar={() => setSidebarOpen(!sidebarOpen)}
@@ -355,6 +397,7 @@ const App: React.FC = () => {
         onDropFiles={handleDropFiles}
         onEditItem={setItemToEdit}
         onContextMenu={handleContextMenu}
+        onCanvasContextMenu={handleCanvasContextMenu}
         onRenameComplete={handleRenameComplete}
       />
       
@@ -380,9 +423,11 @@ const App: React.FC = () => {
         <ContextMenu 
             x={contextMenu.x}
             y={contextMenu.y}
+            itemId={contextMenu.itemId}
             onRename={() => { setRenamingId(contextMenu.itemId); setContextMenu(p => ({...p, isOpen:false})); }}
             onDelete={() => { handleDeleteSelection(); setContextMenu(prev => ({ ...prev, isOpen: false })); }}
             onDownload={handleDownload}
+            onAddImage={handleAddImageRequest}
             onClose={() => setContextMenu(prev => ({ ...prev, isOpen: false }))}
         />
       )}

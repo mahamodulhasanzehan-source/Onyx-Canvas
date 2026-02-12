@@ -1,24 +1,27 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, memo } from 'react';
 import { CanvasItem as ICanvasItem, ResizeHandle, Point } from '../types';
 import { ImageOff } from 'lucide-react';
+import { snapToGrid } from '../utils/geometry';
 
 export interface CanvasItemProps {
   item: ICanvasItem;
   isSelected: boolean;
   scale: number;
+  snapEnabled: boolean;
   onSelect: (id: string) => void;
   onUpdate: (id: string, updates: Partial<ICanvasItem>) => void;
-  onContextMenu: (e: React.MouseEvent, id: string) => void;
+  onContextMenu: (e: React.MouseEvent | { clientX: number, clientY: number }, id: string) => void;
   onEdit?: (item: ICanvasItem) => void;
   viewportOffset: Point;
   isRenaming?: boolean;
   onRenameComplete?: (newName: string) => void;
 }
 
-export const CanvasItem: React.FC<CanvasItemProps> = ({
+export const CanvasItem: React.FC<CanvasItemProps> = memo(({
   item,
   isSelected,
   scale,
+  snapEnabled,
   onSelect,
   onUpdate,
   onContextMenu,
@@ -26,6 +29,10 @@ export const CanvasItem: React.FC<CanvasItemProps> = ({
   isRenaming,
   onRenameComplete
 }) => {
+  // Local state for dragging/resizing interaction
+  // This overrides the props while interacting to avoid laggy round-trips to parent state
+  const [localState, setLocalState] = useState<Partial<ICanvasItem> | null>(null);
+
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState<Point | null>(null);
   
@@ -40,10 +47,17 @@ export const CanvasItem: React.FC<CanvasItemProps> = ({
   const [nameInput, setNameInput] = useState(item.name);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const itemRef = useRef(item);
-  itemRef.current = item;
+  // Refs for event listeners
   const scaleRef = useRef(scale);
   scaleRef.current = scale;
+  
+  // Base item ref to calculate deltas against the starting state of the drag
+  // We use this instead of props.item during drag to avoid fighting with incoming prop updates if any
+  const initialDragItemRef = useRef<ICanvasItem | null>(null);
+
+  // Long Press Refs
+  const touchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const touchStartPos = useRef<Point | null>(null);
 
   useEffect(() => {
       if (isRenaming && inputRef.current) {
@@ -60,6 +74,8 @@ export const CanvasItem: React.FC<CanvasItemProps> = ({
     if (!isRenaming) {
         setIsDragging(true);
         setDragStart({ x: e.clientX, y: e.clientY });
+        initialDragItemRef.current = { ...item }; // Snapshot starting state
+        setLocalState({ x: item.x, y: item.y }); // Initialize local state
     }
   };
 
@@ -68,10 +84,50 @@ export const CanvasItem: React.FC<CanvasItemProps> = ({
     if (onEdit && item.url) onEdit(item);
   };
 
+  // --- Touch Handling ---
+  const handleTouchStart = (e: React.TouchEvent) => {
+    // Note: We intentionally don't stop propagation here to let the touch event bubble up 
+    // if it turns out to be a pan/scroll, but for long-press we catch it.
+    // However, for the ContextMenu to work specifically on this item, we trigger it here.
+    
+    const touch = e.touches[0];
+    touchStartPos.current = { x: touch.clientX, y: touch.clientY };
+
+    touchTimer.current = setTimeout(() => {
+      // Long press detected on item
+      if (navigator.vibrate) navigator.vibrate(50);
+      onContextMenu({ clientX: touch.clientX, clientY: touch.clientY }, item.id);
+      
+      // Clear refs
+      touchStartPos.current = null;
+    }, 500);
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (touchStartPos.current) {
+        const touch = e.touches[0];
+        const dx = Math.abs(touch.clientX - touchStartPos.current.x);
+        const dy = Math.abs(touch.clientY - touchStartPos.current.y);
+        
+        if (dx > 10 || dy > 10) {
+            if (touchTimer.current) clearTimeout(touchTimer.current);
+            touchStartPos.current = null;
+        }
+    }
+  };
+
+  const handleTouchEnd = () => {
+      if (touchTimer.current) clearTimeout(touchTimer.current);
+      touchStartPos.current = null;
+  };
+
   const handleResizeStart = (e: React.MouseEvent, handle: ResizeHandle) => {
     e.stopPropagation();
     e.preventDefault();
     setIsResizing(true);
+    initialDragItemRef.current = { ...item };
+    setLocalState({ x: item.x, y: item.y, width: item.width, height: item.height });
+    
     setResizeStart({ 
       startX: e.clientX, 
       startY: e.clientY, 
@@ -86,17 +142,24 @@ export const CanvasItem: React.FC<CanvasItemProps> = ({
   useEffect(() => {
     const handleGlobalMove = (e: MouseEvent) => {
       const currentScale = scaleRef.current;
-      const currentItem = itemRef.current;
+      const startItem = initialDragItemRef.current;
+
+      if (!startItem) return;
 
       if (isDragging && dragStart) {
         const dx = (e.clientX - dragStart.x) / currentScale;
         const dy = (e.clientY - dragStart.y) / currentScale;
         
-        onUpdate(currentItem.id, {
-          x: currentItem.x + dx,
-          y: currentItem.y + dy
-        });
-        setDragStart({ x: e.clientX, y: e.clientY });
+        let newX = startItem.x + dx;
+        let newY = startItem.y + dy;
+
+        if (snapEnabled) {
+            newX = snapToGrid(newX, 40);
+            newY = snapToGrid(newY, 40);
+        }
+        
+        // Update ONLY local state
+        setLocalState({ x: newX, y: newY });
       }
 
       if (isResizing && resizeStart) {
@@ -131,15 +194,30 @@ export const CanvasItem: React.FC<CanvasItemProps> = ({
             }
         }
 
-        onUpdate(currentItem.id, { x: newX, y: newY, width: newW, height: newH });
+        if (snapEnabled) {
+            // Optional: Snap dimensions or position during resize
+            // Snapping position is safer visually
+            newX = snapToGrid(newX, 40);
+            newY = snapToGrid(newY, 40);
+        }
+
+        setLocalState({ x: newX, y: newY, width: newW, height: newH });
       }
     };
 
     const handleUp = () => {
+      if ((isDragging || isResizing) && localState) {
+          // Commit the final state to parent (and server)
+          // This is the ONLY time we update the server
+          onUpdate(item.id, localState);
+      }
+
       setIsDragging(false);
       setIsResizing(false);
       setDragStart(null);
       setResizeStart(null);
+      setLocalState(null); // Clear local state to revert to props source
+      initialDragItemRef.current = null;
     };
 
     if (isDragging || isResizing) {
@@ -150,7 +228,7 @@ export const CanvasItem: React.FC<CanvasItemProps> = ({
       window.removeEventListener('mousemove', handleGlobalMove);
       window.removeEventListener('mouseup', handleUp);
     };
-  }, [isDragging, isResizing, dragStart, resizeStart, onUpdate]); 
+  }, [isDragging, isResizing, dragStart, resizeStart, onUpdate, item.id, snapEnabled, localState]); 
 
   const handleNameKeyDown = (e: React.KeyboardEvent) => {
       if (e.key === 'Enter') {
@@ -165,20 +243,35 @@ export const CanvasItem: React.FC<CanvasItemProps> = ({
   const handleSize = 10 / scale;
   const handleOffset = -handleSize / 2;
 
+  // Use local state if active, otherwise fallback to props
+  const displayX = localState?.x ?? item.x;
+  const displayY = localState?.y ?? item.y;
+  const displayW = localState?.width ?? item.width;
+  const displayH = localState?.height ?? item.height;
+
+  // Disable transition during drag for instant responsiveness
+  const transitionClass = (isDragging || isResizing) ? 'duration-0' : 'duration-300';
+
   return (
     <div
-      className={`absolute group select-none animate-in fade-in zoom-in-95 duration-300 ${isSelected ? 'z-20' : 'z-10'}`}
+      className={`absolute group select-none animate-in fade-in zoom-in-95 ${transitionClass} ${isSelected ? 'z-20' : 'z-10'}`}
       style={{
-        transform: `translate(${item.x}px, ${item.y}px)`,
-        width: item.width,
-        height: item.height,
+        transform: `translate(${displayX}px, ${displayY}px)`,
+        width: displayW,
+        height: displayH,
         cursor: isDragging ? 'grabbing' : 'grab',
       }}
       onMouseDown={handleMouseDown}
+      onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
       onDoubleClick={handleDoubleClick}
-      onContextMenu={(e) => onContextMenu(e, item.id)}
+      onContextMenu={(e) => {
+          e.stopPropagation();
+          onContextMenu(e, item.id);
+      }}
     >
-      <div className={`w-full h-full relative transition-all duration-200 bg-zinc-900 ${isSelected ? 'ring-2 ring-blue-500 shadow-[0_0_30px_rgba(59,130,246,0.3)]' : 'hover:ring-1 hover:ring-white/50 hover:shadow-lg'}`}>
+      <div className={`w-full h-full relative transition-all ${transitionClass} bg-zinc-900 ${isSelected ? 'ring-2 ring-blue-500 shadow-[0_0_30px_rgba(59,130,246,0.3)]' : 'hover:ring-1 hover:ring-white/50 hover:shadow-lg'}`}>
         {item.url ? (
             <img
             src={item.url}
@@ -199,10 +292,10 @@ export const CanvasItem: React.FC<CanvasItemProps> = ({
         
         {isSelected && (
             <>
-                <div style={{ width: handleSize, height: handleSize, top: handleOffset, left: handleOffset }} className="absolute bg-blue-500 rounded-full cursor-nw-resize hover:scale-150 transition-transform shadow-sm" onMouseDown={(e) => handleResizeStart(e, 'nw')} />
-                <div style={{ width: handleSize, height: handleSize, top: handleOffset, right: handleOffset }} className="absolute bg-blue-500 rounded-full cursor-ne-resize hover:scale-150 transition-transform shadow-sm" onMouseDown={(e) => handleResizeStart(e, 'ne')} />
-                <div style={{ width: handleSize, height: handleSize, bottom: handleOffset, left: handleOffset }} className="absolute bg-blue-500 rounded-full cursor-sw-resize hover:scale-150 transition-transform shadow-sm" onMouseDown={(e) => handleResizeStart(e, 'sw')} />
-                <div style={{ width: handleSize, height: handleSize, bottom: handleOffset, right: handleOffset }} className="absolute bg-blue-500 rounded-full cursor-se-resize hover:scale-150 transition-transform shadow-sm" onMouseDown={(e) => handleResizeStart(e, 'se')} />
+                <div style={{ width: handleSize, height: handleSize, top: handleOffset, left: handleOffset }} className="absolute bg-blue-500 rounded-full cursor-nw-resize hover:scale-150 transition-transform shadow-sm animate-in fade-in zoom-in duration-200" onMouseDown={(e) => handleResizeStart(e, 'nw')} />
+                <div style={{ width: handleSize, height: handleSize, top: handleOffset, right: handleOffset }} className="absolute bg-blue-500 rounded-full cursor-ne-resize hover:scale-150 transition-transform shadow-sm animate-in fade-in zoom-in duration-200" onMouseDown={(e) => handleResizeStart(e, 'ne')} />
+                <div style={{ width: handleSize, height: handleSize, bottom: handleOffset, left: handleOffset }} className="absolute bg-blue-500 rounded-full cursor-sw-resize hover:scale-150 transition-transform shadow-sm animate-in fade-in zoom-in duration-200" onMouseDown={(e) => handleResizeStart(e, 'sw')} />
+                <div style={{ width: handleSize, height: handleSize, bottom: handleOffset, right: handleOffset }} className="absolute bg-blue-500 rounded-full cursor-se-resize hover:scale-150 transition-transform shadow-sm animate-in fade-in zoom-in duration-200" onMouseDown={(e) => handleResizeStart(e, 'se')} />
             </>
         )}
       </div>
@@ -230,4 +323,4 @@ export const CanvasItem: React.FC<CanvasItemProps> = ({
       </div>
     </div>
   );
-};
+});
