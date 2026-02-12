@@ -3,21 +3,17 @@ import { getFirestore } from "firebase/firestore";
 import { getStorage } from "firebase/storage";
 import { getAuth } from "firebase/auth";
 
-const getEnv = (key: string) => {
-  // @ts-ignore
-  return import.meta.env?.[key] || '';
-};
-
+// Direct configuration as requested
 const firebaseConfig = {
-  apiKey: getEnv('VITE_API_KEY'),
-  authDomain: getEnv('VITE_AUTH_DOMAIN'),
-  projectId: getEnv('VITE_PROJECT_ID'),
-  storageBucket: getEnv('VITE_STORAGE_BUCKET'),
-  messagingSenderId: getEnv('VITE_MESSAGING_SENDER_ID'),
-  appId: getEnv('VITE_APP_ID')
+  apiKey: "AIzaSyBkzJzSzSXvbOaSYs7csHLSp-8EgfEY1QQ",
+  authDomain: "tacotyper.firebaseapp.com",
+  projectId: "tacotyper",
+  storageBucket: "tacotyper.firebasestorage.app",
+  messagingSenderId: "781290974991",
+  appId: "1:781290974991:web:1d8c5e546ba03a58a5187a",
+  measurementId: "G-N38BBSR6J2"
 };
 
-// Check if configuration is valid
 export let isFirebaseInitialized = false;
 
 let app;
@@ -25,19 +21,15 @@ let db: any = null;
 let storage: any = null;
 let auth: any = null;
 
-if (firebaseConfig.apiKey) {
-  try {
-    app = initializeApp(firebaseConfig);
-    db = getFirestore(app);
-    storage = getStorage(app);
-    auth = getAuth(app);
-    isFirebaseInitialized = true;
-    console.log("Firebase initialized successfully.");
-  } catch (e) {
-    console.warn("Firebase initialization failed, falling back to local mode:", e);
-  }
-} else {
-  console.log("No Firebase API key found. Running in Local Mode (IndexedDB).");
+try {
+  app = initializeApp(firebaseConfig);
+  db = getFirestore(app);
+  storage = getStorage(app);
+  auth = getAuth(app);
+  isFirebaseInitialized = true;
+  console.log("Firebase initialized successfully.");
+} catch (e) {
+  console.warn("Firebase initialization failed, falling back to local mode:", e);
 }
 
 export { db, storage, auth };
