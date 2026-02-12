@@ -3,7 +3,6 @@ import { getFirestore, enableIndexedDbPersistence } from "firebase/firestore";
 import { getStorage } from "firebase/storage";
 import { getAuth, signInAnonymously } from "firebase/auth";
 
-// Direct configuration
 const firebaseConfig = {
   apiKey: "AIzaSyBkzJzSzSXvbOaSYs7csHLSp-8EgfEY1QQ",
   authDomain: "tacotyper.firebaseapp.com",
@@ -13,8 +12,6 @@ const firebaseConfig = {
   appId: "1:781290974991:web:1d8c5e546ba03a58a5187a",
   measurementId: "G-N38BBSR6J2"
 };
-
-export let isFirebaseInitialized = false;
 
 let app;
 let db: any = null;
@@ -27,10 +24,9 @@ try {
   storage = getStorage(app);
   auth = getAuth(app);
   
-  isFirebaseInitialized = true;
   console.log("Firebase initialized successfully.");
 
-  // Enable offline persistence
+  // Enable standard Firestore offline persistence (optional, good for spotty wifi)
   enableIndexedDbPersistence(db).catch((err) => {
       if (err.code == 'failed-precondition') {
           console.warn('Firebase persistence failed: Multiple tabs open');
@@ -47,8 +43,7 @@ try {
   });
 
 } catch (e) {
-  console.warn("Firebase initialization failed, falling back to local mode:", e);
-  isFirebaseInitialized = false;
+  console.error("Firebase initialization critical error:", e);
 }
 
 export { db, storage, auth };

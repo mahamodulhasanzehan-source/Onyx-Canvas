@@ -82,11 +82,15 @@ const App: React.FC = () => {
         const { url, storagePath } = await uploadImageBlob(fileToProcess, fileName);
         
         const img = new Image();
+        img.crossOrigin = "anonymous";
         img.src = url;
-        await new Promise((resolve) => { img.onload = resolve; });
+        await new Promise((resolve) => { 
+            img.onload = resolve; 
+            img.onerror = resolve; // Resolve on error too so we don't hang
+        });
         
-        const width = img.naturalWidth;
-        const height = img.naturalHeight;
+        const width = img.naturalWidth || 400;
+        const height = img.naturalHeight || 300;
 
         await addCanvasItem({
           storagePath,
@@ -95,8 +99,8 @@ const App: React.FC = () => {
           y: placeholder.y - height / 2,
           width,
           height,
-          originalWidth: img.naturalWidth,
-          originalHeight: img.naturalHeight,
+          originalWidth: width,
+          originalHeight: height,
           rotation: 0,
           name: fileName.split('.')[0] || 'Untitled',
           filters: { brightness: 100, contrast: 100 },
@@ -104,9 +108,14 @@ const App: React.FC = () => {
         });
 
       } catch (e) {
-        console.error("Failed to add image", e);
-        alert("Failed to upload image. Please check your connection or quota.");
+        console.error("FAILED TO ADD IMAGE:", e);
+        // Alert user about CORS specifically
+        // @ts-ignore
+        if (e.message?.includes('Upload timed out') || e.message?.includes('CORS')) {
+            alert("Upload Failed: Could not connect to Storage. Please check your internet or Firebase CORS configuration.");
+        }
       } finally {
+          // ALWAYS remove loading item
           setLoadingItems(prev => prev.filter(p => p.id !== placeholder.id));
       }
     }
