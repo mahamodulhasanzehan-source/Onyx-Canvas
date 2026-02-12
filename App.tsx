@@ -56,6 +56,7 @@ const App: React.FC = () => {
       let fileToProcess: Blob = file;
       let fileName = file.name;
 
+      // Simple HEIC check
       const isHeic = file.name.toLowerCase().endsWith('.heic') || file.type === 'image/heic';
       if (isHeic) {
           try {
@@ -64,7 +65,7 @@ const App: React.FC = () => {
               const converted = await heic2any({
                   blob: file,
                   toType: 'image/jpeg',
-                  quality: 1.0 
+                  quality: 0.9
               });
               fileToProcess = Array.isArray(converted) ? converted[0] : converted;
               fileName = fileName.replace(/\.heic$/i, '.jpg');
@@ -73,7 +74,9 @@ const App: React.FC = () => {
               setLoadingItems(prev => prev.filter(p => p.id !== placeholder.id));
               continue; 
           }
-      } else if (!file.type.startsWith('image/')) {
+      } else if (!file.type.startsWith('image/') && file.type !== '') {
+          // Allow empty type (some OS don't set it for odd extensions), check extension if needed
+          console.warn("Skipping non-image file:", file.name, file.type);
           setLoadingItems(prev => prev.filter(p => p.id !== placeholder.id));
           continue;
       }
@@ -81,12 +84,19 @@ const App: React.FC = () => {
       try {
         const { url, storagePath } = await uploadImageBlob(fileToProcess, fileName);
         
+        // Load image to get dimensions
         const img = new Image();
-        img.crossOrigin = "anonymous";
+        // REMOVED crossOrigin="anonymous" as it breaks Blob URL loading in some contexts
         img.src = url;
-        await new Promise((resolve) => { 
-            img.onload = resolve; 
-            img.onerror = resolve; // Resolve on error too so we don't hang
+        
+        await new Promise<void>((resolve, reject) => { 
+            img.onload = () => resolve(); 
+            img.onerror = (e) => {
+                console.error("Image load failed for URL:", url, e);
+                // We resolve anyway to try and add it with default dims, 
+                // but usually this means the blob is bad.
+                resolve(); 
+            };
         });
         
         const width = img.naturalWidth || 400;
@@ -94,7 +104,7 @@ const App: React.FC = () => {
 
         await addCanvasItem({
           storagePath,
-          url,
+          url, // Note: This URL is temporary for the session, subscription will refresh it
           x: placeholder.x - width / 2,
           y: placeholder.y - height / 2,
           width,
@@ -109,13 +119,8 @@ const App: React.FC = () => {
 
       } catch (e) {
         console.error("FAILED TO ADD IMAGE:", e);
-        // Alert user about CORS specifically
-        // @ts-ignore
-        if (e.message?.includes('Upload timed out') || e.message?.includes('CORS')) {
-            alert("Upload Failed: Could not connect to Storage. Please check your internet or Firebase CORS configuration.");
-        }
+        alert("Failed to add image. Check console for details.");
       } finally {
-          // ALWAYS remove loading item
           setLoadingItems(prev => prev.filter(p => p.id !== placeholder.id));
       }
     }
@@ -182,7 +187,6 @@ const App: React.FC = () => {
               handleDeleteSelection();
           }
 
-          // Arrow Key Nudging
           if (e.key.startsWith('Arrow')) {
               e.preventDefault();
               const nudge = e.shiftKey ? 10 : 1;

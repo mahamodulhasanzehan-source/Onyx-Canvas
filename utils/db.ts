@@ -17,7 +17,8 @@ const COLLECTION_NAME = 'canvas_items';
 // --- Local Image Database (IndexedDB) ---
 const DB_NAME = 'onyx_images_db';
 const STORE_NAME = 'images';
-const DB_VERSION = 1;
+// Increment version to ensure store creation runs on old clients
+const DB_VERSION = 2; 
 
 let dbPromise: Promise<IDBDatabase> | null = null;
 
@@ -32,38 +33,61 @@ const getImagesDB = (): Promise<IDBDatabase> => {
                 }
             };
             request.onsuccess = () => resolve(request.result);
-            request.onerror = () => reject(request.error);
+            request.onerror = () => {
+                console.error("IndexedDB Open Failed:", request.error);
+                reject(request.error);
+            };
         });
     }
     return dbPromise;
 };
 
 const saveImageLocally = async (id: string, blob: Blob) => {
-    const database = await getImagesDB();
-    return new Promise<void>((resolve, reject) => {
-        const tx = database.transaction(STORE_NAME, 'readwrite');
-        const store = tx.objectStore(STORE_NAME);
-        const req = store.put(blob, id);
-        req.onsuccess = () => resolve();
-        req.onerror = () => reject(req.error);
-    });
+    try {
+        const database = await getImagesDB();
+        return new Promise<void>((resolve, reject) => {
+            const tx = database.transaction(STORE_NAME, 'readwrite');
+            const store = tx.objectStore(STORE_NAME);
+            const req = store.put(blob, id);
+            req.onsuccess = () => resolve();
+            req.onerror = () => {
+                console.error("IndexedDB Save Failed:", req.error);
+                reject(req.error);
+            };
+        });
+    } catch (e) {
+        console.error("Failed to access IndexedDB:", e);
+        throw e;
+    }
 };
 
 const getImageLocally = async (id: string): Promise<Blob | null> => {
-    const database = await getImagesDB();
-    return new Promise((resolve) => {
-        const tx = database.transaction(STORE_NAME, 'readonly');
-        const store = tx.objectStore(STORE_NAME);
-        const req = store.get(id);
-        req.onsuccess = () => resolve(req.result || null);
-        req.onerror = () => resolve(null);
-    });
+    try {
+        const database = await getImagesDB();
+        return new Promise((resolve) => {
+            const tx = database.transaction(STORE_NAME, 'readonly');
+            const store = tx.objectStore(STORE_NAME);
+            const req = store.get(id);
+            req.onsuccess = () => resolve(req.result || null);
+            req.onerror = () => {
+                console.warn("IndexedDB Read Failed (missing item?):", req.error);
+                resolve(null);
+            };
+        });
+    } catch (e) {
+        console.warn("IndexedDB Access Error:", e);
+        return null;
+    }
 };
 
 const deleteImageLocally = async (id: string) => {
-    const database = await getImagesDB();
-    const tx = database.transaction(STORE_NAME, 'readwrite');
-    tx.objectStore(STORE_NAME).delete(id);
+    try {
+        const database = await getImagesDB();
+        const tx = database.transaction(STORE_NAME, 'readwrite');
+        tx.objectStore(STORE_NAME).delete(id);
+    } catch (e) {
+        console.warn("IndexedDB Delete Error:", e);
+    }
 };
 
 // --- Firestore & Logic ---
@@ -96,7 +120,6 @@ export const subscribeToCanvasItems = (callback: (items: CanvasItem[]) => void) 
                     return { ...item, url: URL.createObjectURL(blob) };
                 } else {
                     // Image missing (maybe on another device)
-                    // Keep the placeholder URL or empty
                     return { ...item, url: '' }; 
                 }
             }
@@ -120,7 +143,6 @@ export const subscribeToCanvasItems = (callback: (items: CanvasItem[]) => void) 
 export const uploadImageBlob = async (blob: Blob, fileName: string): Promise<{ url: string, storagePath: string }> => {
   // We no longer wait for Auth here because local DB doesn't need it, 
   // but we still need auth for the subsequent Firestore write.
-  // It's safer to just return success immediately for the file.
   
   const uniqueId = crypto.randomUUID();
   const storagePath = `local:${uniqueId}`; // Marker for local storage

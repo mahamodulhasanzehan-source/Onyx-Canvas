@@ -1,6 +1,6 @@
 import React from 'react';
 import { CanvasItem } from '../types';
-import { X, Image as ImageIcon } from 'lucide-react';
+import { X, Image as ImageIcon, ImageOff } from 'lucide-react';
 
 interface SidebarProps {
   isOpen: boolean;
@@ -42,8 +42,12 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose, items, onItem
                   onClick={() => onItemClick(item)}
                   className="w-full flex items-center gap-3 p-2 rounded-lg hover:bg-zinc-900 text-left group transition-colors border border-transparent hover:border-zinc-800"
                 >
-                  <div className="w-12 h-12 rounded bg-zinc-900 overflow-hidden shrink-0 border border-zinc-800 group-hover:border-zinc-700">
-                    <img src={item.url} alt="" className="w-full h-full object-cover" />
+                  <div className="w-12 h-12 rounded bg-zinc-900 overflow-hidden shrink-0 border border-zinc-800 group-hover:border-zinc-700 flex items-center justify-center">
+                    {item.url ? (
+                        <img src={item.url} alt="" className="w-full h-full object-cover" />
+                    ) : (
+                        <ImageOff size={16} className="text-zinc-700" />
+                    )}
                   </div>
                   <div className="min-w-0">
                     <p className="text-sm text-zinc-300 group-hover:text-white truncate font-medium">{item.name}</p>
