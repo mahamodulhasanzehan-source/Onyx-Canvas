@@ -111,7 +111,23 @@ export const useCanvasGestures = ({
 
   // Touch Logic
   const handleTouchStart = (e: React.TouchEvent) => {
+    // CRITICAL: If 2 fingers, ALWAYS allow canvas gesture (pinch), ignoring if we touched an item.
+    if (e.touches.length === 2) {
+      isGestureActiveRef.current = true;
+      if (touchTimerRef.current) clearTimeout(touchTimerRef.current);
+      touchStartPosRef.current = null;
+      
+      const t1 = e.touches[0];
+      const t2 = e.touches[1];
+      const dist = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
+      lastPinchDistRef.current = dist;
+      lastTouchRef.current = null;
+      return;
+    }
+
+    // If 1 finger, we respect the item boundary (let ItemInteraction handle it)
     if ((e.target as HTMLElement).closest('.canvas-item')) return;
+
     if (e.touches.length === 1) {
       const touch = e.touches[0];
       lastTouchRef.current = { x: touch.clientX, y: touch.clientY };
@@ -123,20 +139,12 @@ export const useCanvasGestures = ({
         touchStartPosRef.current = null;
         isGestureActiveRef.current = false;
       }, 500);
-    } else if (e.touches.length === 2) {
-      isGestureActiveRef.current = true;
-      if (touchTimerRef.current) clearTimeout(touchTimerRef.current);
-      touchStartPosRef.current = null;
-      const t1 = e.touches[0];
-      const t2 = e.touches[1];
-      const dist = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
-      lastPinchDistRef.current = dist;
-      lastTouchRef.current = null;
     }
   };
 
   const handleTouchMove = (e: React.TouchEvent) => {
     if (!isGestureActiveRef.current) return;
+    
     if (e.touches.length === 1) {
       const touch = e.touches[0];
       const last = lastTouchRef.current;

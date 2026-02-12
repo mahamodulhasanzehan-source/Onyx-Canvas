@@ -9,7 +9,7 @@ export interface CanvasItemProps {
   isSelected: boolean;
   scale: number;
   snapEnabled: boolean;
-  onSelect: (id: string) => void;
+  onSelect: (id: string | null) => void;
   onUpdate: (id: string, updates: Partial<ICanvasItem>) => void;
   onContextMenu: (e: React.MouseEvent | { clientX: number, clientY: number }, id: string) => void;
   onEdit?: (item: ICanvasItem) => void;
@@ -44,7 +44,8 @@ export const CanvasItem: React.FC<CanvasItemProps> = memo(({
     snapEnabled,
     onUpdate,
     onSelect,
-    isRenaming
+    isRenaming,
+    isSelected
   });
 
   const [nameInput, setNameInput] = useState(item.name);
@@ -69,9 +70,16 @@ export const CanvasItem: React.FC<CanvasItemProps> = memo(({
   const handleTouchStart = (e: React.TouchEvent) => {
     const touch = e.touches[0];
     touchStartPos.current = { x: touch.clientX, y: touch.clientY };
+    
     touchTimer.current = setTimeout(() => {
-      if (navigator.vibrate) navigator.vibrate(50);
-      onContextMenu({ clientX: touch.clientX, clientY: touch.clientY }, item.id);
+      // REQUIREMENT: Only show context menu on long press if the item is ALREADY selected.
+      // This prevents accidental menus when trying to interact or zoom.
+      // Note: If you tap an unselected item, it becomes selected. 
+      // You must lift your finger (tap) then touch and hold again for this to fire.
+      if (isSelected) {
+          if (navigator.vibrate) navigator.vibrate(50);
+          onContextMenu({ clientX: touch.clientX, clientY: touch.clientY }, item.id);
+      }
       touchStartPos.current = null;
     }, 500);
   };

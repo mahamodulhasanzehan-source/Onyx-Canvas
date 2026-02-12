@@ -8,8 +8,9 @@ interface ItemInteractionConfig {
   scale: number;
   snapEnabled: boolean;
   onUpdate: (id: string, updates: Partial<CanvasItem>) => void;
-  onSelect: (id: string) => void;
+  onSelect: (id: string | null) => void;
   isRenaming?: boolean;
+  isSelected: boolean;
 }
 
 export const useItemInteraction = ({
@@ -19,7 +20,8 @@ export const useItemInteraction = ({
   snapEnabled,
   onUpdate,
   onSelect,
-  isRenaming
+  isRenaming,
+  isSelected
 }: ItemInteractionConfig) => {
   const [localState, setLocalState] = useState<Partial<CanvasItem> | null>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -35,11 +37,26 @@ export const useItemInteraction = ({
   const initialDragItemRef = useRef<CanvasItem | null>(null);
   const scaleRef = useRef(scale);
   scaleRef.current = scale;
+  
+  // Track state for click-to-deselect
+  const hasMovedRef = useRef(false);
+  const wasSelectedRef = useRef(false);
 
   const handleMouseDown = (e: React.MouseEvent) => {
     if (e.button !== 0) return;
     e.stopPropagation();
-    onSelect(item.id);
+    
+    // Store initial state
+    wasSelectedRef.current = isSelected;
+    hasMovedRef.current = false;
+
+    // If NOT selected, select immediately so visual feedback is instant
+    if (!isSelected) {
+      onSelect(item.id);
+    }
+    // If ALREADY selected, we wait until MouseUp to decide if we should deselect (toggle),
+    // because the user might be starting a drag.
+
     if (!isRenaming) {
       setIsDragging(true);
       setDragStart({ x: e.clientX, y: e.clientY });
@@ -73,6 +90,12 @@ export const useItemInteraction = ({
       if (!startItem) return;
 
       if (isDragging && dragStart) {
+        // Check if we moved enough to consider it a drag
+        const dist = Math.hypot(e.clientX - dragStart.x, e.clientY - dragStart.y);
+        if (dist > 3) {
+            hasMovedRef.current = true;
+        }
+
         const dx = (e.clientX - dragStart.x) / currentScale;
         const dy = (e.clientY - dragStart.y) / currentScale;
         let newX = startItem.x + dx;
@@ -164,9 +187,20 @@ export const useItemInteraction = ({
     };
 
     const handleUp = () => {
-      if ((isDragging || isResizing) && localState) {
+      if (isDragging) {
+        // CLICK-TO-DESELECT LOGIC
+        // If we didn't drag, and it was already selected, then toggle it off.
+        if (!hasMovedRef.current && wasSelectedRef.current) {
+             onSelect(null);
+        }
+        // If we did drag, save the changes
+        else if (hasMovedRef.current && localState) {
+            onUpdate(item.id, localState);
+        }
+      } else if (isResizing && localState) {
         onUpdate(item.id, localState);
       }
+
       setIsDragging(false);
       setIsResizing(false);
       setDragStart(null);
@@ -183,7 +217,7 @@ export const useItemInteraction = ({
       window.removeEventListener('mousemove', handleGlobalMove);
       window.removeEventListener('mouseup', handleUp);
     };
-  }, [isDragging, isResizing, dragStart, resizeStart, onUpdate, item.id, snapEnabled, localState, items]);
+  }, [isDragging, isResizing, dragStart, resizeStart, onUpdate, item.id, snapEnabled, localState, items, onSelect]);
 
   return {
     localState,
