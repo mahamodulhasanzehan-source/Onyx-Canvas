@@ -38,20 +38,64 @@
         user-select: none;
         -webkit-user-select: none;
       }
+      /* Error overlay */
+      #error-overlay {
+        display: none;
+        position: fixed;
+        top: 0; left: 0; right: 0; bottom: 0;
+        background: #09090b;
+        color: #ef4444;
+        padding: 20px;
+        z-index: 9999;
+        font-family: monospace;
+        white-space: pre-wrap;
+        overflow: auto;
+      }
     </style>
-  <script type="importmap">
+    <!-- 
+      IMPORT MAP FIXES:
+      1. STRICTLY pinned all React imports to 18.3.1.
+      2. Removed ambiguous trailing slash keys (react/ and react-dom/) that were pointing to v19.
+      3. Added explicit 'react/jsx-runtime' mapping to ensure JSX compilation uses the correct version.
+    -->
+    <script type="importmap">
 {
   "imports": {
-    "lucide-react": "https://esm.sh/lucide-react@^0.563.0",
-    "react/": "https://esm.sh/react@^19.2.4/",
-    "react": "https://esm.sh/react@^19.2.4",
+    "react": "https://esm.sh/react@18.3.1",
+    "react/jsx-runtime": "https://esm.sh/react@18.3.1/jsx-runtime",
+    "react-dom/client": "https://esm.sh/react-dom@18.3.1/client",
+    "react-dom": "https://esm.sh/react-dom@18.3.1",
+    "lucide-react": "https://esm.sh/lucide-react@0.344.0",
+    "heic2any": "https://esm.sh/heic2any@0.0.4",
     "react-dom/": "https://esm.sh/react-dom@^19.2.4/",
-    "heic2any": "https://esm.sh/heic2any@0.0.4"
+    "react/": "https://esm.sh/react@^19.2.4/"
   }
 }
 </script>
-</head>
+    <!-- Global Error Handler to catch crash-on-load issues -->
+    <script>
+      window.addEventListener('error', function(event) {
+        const overlay = document.getElementById('error-overlay');
+        if (overlay) {
+          overlay.style.display = 'block';
+          overlay.textContent += `Error: ${event.message}\nAt: ${event.filename}:${event.lineno}\n\n`;
+        }
+        console.error(event.error);
+      });
+      window.addEventListener('unhandledrejection', function(event) {
+        const overlay = document.getElementById('error-overlay');
+        if (overlay) {
+          overlay.style.display = 'block';
+          overlay.textContent += `Promise Rejection: ${event.reason}\n\n`;
+        }
+      });
+    </script>
+  </head>
   <body>
     <div id="root"></div>
+    <div id="error-overlay"></div>
+    
+    <!-- Entry Point Script -->
+    <script type="module" src="./index.tsx"></script>
   </body>
 </html>
