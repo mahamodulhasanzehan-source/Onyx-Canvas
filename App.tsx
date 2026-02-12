@@ -20,7 +20,7 @@ const App: React.FC = () => {
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
-  const [snapEnabled, setSnapEnabled] = useState(false);
+  const [snapEnabled, setSnapEnabled] = useState(true);
   const [itemToEdit, setItemToEdit] = useState<CanvasItem | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [contextMenu, setContextMenu] = useState<ContextMenuState>({ isOpen: false, x: 0, y: 0, itemId: '' });
