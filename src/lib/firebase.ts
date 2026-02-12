@@ -15,7 +15,6 @@ const firebaseConfig = {
 };
 
 export let isFirebaseInitialized = false;
-export let isOffline = false;
 
 let app;
 let db: any = null;
@@ -30,14 +29,21 @@ try {
   
   isFirebaseInitialized = true;
   console.log("Firebase initialized successfully.");
+
+  // Enable offline persistence
+  enableIndexedDbPersistence(db).catch((err) => {
+      if (err.code == 'failed-precondition') {
+          console.warn('Firebase persistence failed: Multiple tabs open');
+      } else if (err.code == 'unimplemented') {
+          console.warn('Firebase persistence not supported by browser');
+      }
+  });
   
   // Auto sign-in
   signInAnonymously(auth).then(() => {
     console.log("Signed in anonymously");
   }).catch((error) => {
     console.warn("Anonymous auth failed:", error);
-    // If auth fails, we might still be able to read public data, 
-    // but usually we should treat this as a signal to maybe use local mode if writes fail.
   });
 
 } catch (e) {

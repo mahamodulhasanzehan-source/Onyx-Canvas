@@ -19,6 +19,7 @@ import {
 import { CanvasItem } from '../types';
 
 const COLLECTION_NAME = 'canvas_items';
+// We track this variable to switch modes for the session
 let forcedLocalMode = false;
 
 // --- Local IndexedDB Setup (Fallback) ---
@@ -87,16 +88,15 @@ const getLocalImageBlob = async (id: string): Promise<Blob | null> => {
 
 // --- Fallback Handlers ---
 
-const switchToLocalMode = () => {
+const switchToLocalMode = (reason?: string) => {
     if (!forcedLocalMode) {
-        console.warn("Switching to Local Mode due to Firebase connection issues.");
+        console.warn(`Switching to Local Mode. Reason: ${reason || 'Connection issue'}`);
         forcedLocalMode = true;
-        // Trigger a refresh of the subscription to switch data sources
-        // We can't easily force the React component to re-subscribe from here 
-        // without a global event, but new calls will use local.
-        // For the subscription, we handle it inside the subscribe function.
+        // Notify any listeners that might care about status (could add an event emitter here later)
     }
 };
+
+export const isLocalMode = () => forcedLocalMode;
 
 // --- Exported Functions ---
 
@@ -129,7 +129,7 @@ export const subscribeToCanvasItems = (callback: (items: CanvasItem[]) => void) 
         (error) => {
             console.error("Firestore subscription failed:", error);
             // If permission denied or other fatal error, switch to local
-            switchToLocalMode();
+            switchToLocalMode("Firestore subscription error");
             // Start local subscription immediately
             listeners.push(callback);
             notifyListeners();
@@ -144,7 +144,7 @@ export const subscribeToCanvasItems = (callback: (items: CanvasItem[]) => void) 
 
   } catch (e) {
       console.error("Setup subscription error:", e);
-      switchToLocalMode();
+      switchToLocalMode("Setup failed");
       listeners.push(callback);
       notifyListeners();
       return () => {};
@@ -156,23 +156,28 @@ export const subscribeToCanvasItems = (callback: (items: CanvasItem[]) => void) 
  * Tries Firebase Storage. If it fails, falls back to IndexedDB.
  */
 export const uploadImageBlob = async (blob: Blob, fileName: string): Promise<{ url: string, storagePath: string }> => {
+  // Short timeout for cloud upload to prevent "infinite loading" feel
+  // 3 seconds is enough for a handshake. If it takes longer, user experience suffers anyway.
+  const CLOUD_TIMEOUT_MS = 3000; 
+
   if (!forcedLocalMode && isFirebaseInitialized && storage) {
       try {
           const uniqueId = crypto.randomUUID();
           const storagePath = `images/${uniqueId}_${fileName}`;
           const storageRef = ref(storage, storagePath);
           
-          // Add a timeout promise to detect hangs
-          const uploadPromise = uploadBytes(storageRef, blob);
-          const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Upload timeout")), 15000));
+          const uploadTask = uploadBytes(storageRef, blob);
+          const timeoutPromise = new Promise((_, reject) => 
+              setTimeout(() => reject(new Error("Cloud Upload Timeout")), CLOUD_TIMEOUT_MS)
+          );
           
-          await Promise.race([uploadPromise, timeoutPromise]);
-          
+          await Promise.race([uploadTask, timeoutPromise]);
           const url = await getDownloadURL(storageRef);
+          
           return { url, storagePath };
       } catch (e) {
-          console.error("Firebase Storage upload failed, using local fallback:", e);
-          switchToLocalMode();
+          console.warn("Firebase Storage upload failed/timed out, switching to Local Mode:", e);
+          switchToLocalMode("Storage upload failed");
           // Fall through to local logic below
       }
   }
@@ -194,14 +199,21 @@ export const uploadImageBlob = async (blob: Blob, fileName: string): Promise<{ u
 export const addCanvasItem = async (item: Omit<CanvasItem, 'id'>) => {
   if (!forcedLocalMode && isFirebaseInitialized && db) {
       try {
-          await addDoc(collection(db, COLLECTION_NAME), {
+          // Wrap in timeout so we don't hang if Firestore is trying to reconnect forever
+          const addPromise = addDoc(collection(db, COLLECTION_NAME), {
             ...item,
             createdAt: serverTimestamp()
           });
+          
+          const timeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error("Firestore Write Timeout")), 3000)
+          );
+
+          await Promise.race([addPromise, timeoutPromise]);
           return;
       } catch (e) {
-          console.error("Firestore write failed, using local fallback:", e);
-          switchToLocalMode();
+          console.warn("Firestore write failed, switching to Local Mode:", e);
+          switchToLocalMode("Write failed");
           // Fall through to local logic below
       }
   }
@@ -221,13 +233,15 @@ export const updateCanvasItem = async (id: string, updates: Partial<CanvasItem>)
   if (!forcedLocalMode && isFirebaseInitialized && db) {
       try {
           const docRef = doc(db, COLLECTION_NAME, id);
-          await updateDoc(docRef, updates);
+          // We don't await this strictly with a timeout because UI updates optimistically anyway
+          updateDoc(docRef, updates).catch(e => {
+              console.warn("Firestore background update failed:", e);
+              switchToLocalMode("Update failed");
+          });
           return;
       } catch (e) {
            console.error("Firestore update failed:", e);
-           // If the doc doesn't exist in cloud (maybe it was created locally), this will fail.
-           // We should try local update too just in case.
-           switchToLocalMode();
+           switchToLocalMode("Update failed");
       }
   }
 
@@ -261,7 +275,7 @@ export const deleteCanvasItem = async (id: string, storagePath?: string) => {
           return;
       } catch (e) {
           console.warn("Firestore delete failed:", e);
-          switchToLocalMode();
+          switchToLocalMode("Delete failed");
       }
   }
 
