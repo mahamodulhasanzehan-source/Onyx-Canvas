@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { CanvasItem as ICanvasItem, ResizeHandle, Point } from '../types';
+import { ImageOff } from 'lucide-react';
 
 export interface CanvasItemProps {
   item: ICanvasItem;
@@ -39,7 +40,6 @@ export const CanvasItem: React.FC<CanvasItemProps> = ({
   const [nameInput, setNameInput] = useState(item.name);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Refs for event listeners to avoid re-binding
   const itemRef = useRef(item);
   itemRef.current = item;
   const scaleRef = useRef(scale);
@@ -53,7 +53,7 @@ export const CanvasItem: React.FC<CanvasItemProps> = ({
   }, [isRenaming]);
 
   const handleMouseDown = (e: React.MouseEvent) => {
-    if (e.button !== 0) return; // Only left click
+    if (e.button !== 0) return;
     e.stopPropagation();
     onSelect(item.id);
     
@@ -65,7 +65,7 @@ export const CanvasItem: React.FC<CanvasItemProps> = ({
 
   const handleDoubleClick = (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (onEdit) onEdit(item);
+    if (onEdit && item.url) onEdit(item);
   };
 
   const handleResizeStart = (e: React.MouseEvent, handle: ResizeHandle) => {
@@ -83,7 +83,6 @@ export const CanvasItem: React.FC<CanvasItemProps> = ({
     });
   };
 
-  // Global Drag/Resize
   useEffect(() => {
     const handleGlobalMove = (e: MouseEvent) => {
       const currentScale = scaleRef.current;
@@ -152,7 +151,6 @@ export const CanvasItem: React.FC<CanvasItemProps> = ({
       window.removeEventListener('mouseup', handleUp);
     };
   }, [isDragging, isResizing, dragStart, resizeStart, onUpdate]); 
-  // removed item and scale from deps to prevent effect churn, using refs instead
 
   const handleNameKeyDown = (e: React.KeyboardEvent) => {
       if (e.key === 'Enter') {
@@ -164,7 +162,6 @@ export const CanvasItem: React.FC<CanvasItemProps> = ({
       onRenameComplete?.(nameInput);
   };
 
-  // Counter-scale for handles so they stay constant visual size
   const handleSize = 10 / scale;
   const handleOffset = -handleSize / 2;
 
@@ -181,17 +178,24 @@ export const CanvasItem: React.FC<CanvasItemProps> = ({
       onDoubleClick={handleDoubleClick}
       onContextMenu={(e) => onContextMenu(e, item.id)}
     >
-      <div className={`w-full h-full relative transition-all duration-200 ${isSelected ? 'ring-2 ring-blue-500 shadow-[0_0_30px_rgba(59,130,246,0.3)]' : 'hover:ring-1 hover:ring-white/50 hover:shadow-lg'}`}>
-        <img
-          src={item.url}
-          alt={item.name}
-          className="w-full h-full object-fill pointer-events-none select-none block"
-          style={{
-             filter: `brightness(${item.filters.brightness}%) contrast(${item.filters.contrast}%)`,
-             transform: `rotate(${item.rotation}deg)` 
-          }}
-          draggable={false}
-        />
+      <div className={`w-full h-full relative transition-all duration-200 bg-zinc-900 ${isSelected ? 'ring-2 ring-blue-500 shadow-[0_0_30px_rgba(59,130,246,0.3)]' : 'hover:ring-1 hover:ring-white/50 hover:shadow-lg'}`}>
+        {item.url ? (
+            <img
+            src={item.url}
+            alt={item.name}
+            className="w-full h-full object-fill pointer-events-none select-none block"
+            style={{
+                filter: `brightness(${item.filters.brightness}%) contrast(${item.filters.contrast}%)`,
+                transform: `rotate(${item.rotation}deg)` 
+            }}
+            draggable={false}
+            />
+        ) : (
+            <div className="w-full h-full flex flex-col items-center justify-center text-zinc-600 p-2">
+                <ImageOff size={24} />
+                <span className="text-[10px] mt-1 text-center leading-tight">Image on other device</span>
+            </div>
+        )}
         
         {isSelected && (
             <>

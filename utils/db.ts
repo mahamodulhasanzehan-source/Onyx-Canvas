@@ -1,4 +1,4 @@
-import { db, storage, waitForAuth } from '../src/lib/firebase';
+import { db, waitForAuth } from '../src/lib/firebase';
 import { 
   collection, 
   onSnapshot, 
@@ -10,18 +10,67 @@ import {
   orderBy,
   serverTimestamp
 } from 'firebase/firestore';
-import { 
-  ref, 
-  uploadBytes, 
-  getDownloadURL, 
-  deleteObject 
-} from 'firebase/storage';
 import { CanvasItem } from '../types';
 
 const COLLECTION_NAME = 'canvas_items';
 
+// --- Local Image Database (IndexedDB) ---
+const DB_NAME = 'onyx_images_db';
+const STORE_NAME = 'images';
+const DB_VERSION = 1;
+
+let dbPromise: Promise<IDBDatabase> | null = null;
+
+const getImagesDB = (): Promise<IDBDatabase> => {
+    if (!dbPromise) {
+        dbPromise = new Promise((resolve, reject) => {
+            const request = indexedDB.open(DB_NAME, DB_VERSION);
+            request.onupgradeneeded = (event) => {
+                const database = (event.target as IDBOpenDBRequest).result;
+                if (!database.objectStoreNames.contains(STORE_NAME)) {
+                    database.createObjectStore(STORE_NAME);
+                }
+            };
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+        });
+    }
+    return dbPromise;
+};
+
+const saveImageLocally = async (id: string, blob: Blob) => {
+    const database = await getImagesDB();
+    return new Promise<void>((resolve, reject) => {
+        const tx = database.transaction(STORE_NAME, 'readwrite');
+        const store = tx.objectStore(STORE_NAME);
+        const req = store.put(blob, id);
+        req.onsuccess = () => resolve();
+        req.onerror = () => reject(req.error);
+    });
+};
+
+const getImageLocally = async (id: string): Promise<Blob | null> => {
+    const database = await getImagesDB();
+    return new Promise((resolve) => {
+        const tx = database.transaction(STORE_NAME, 'readonly');
+        const store = tx.objectStore(STORE_NAME);
+        const req = store.get(id);
+        req.onsuccess = () => resolve(req.result || null);
+        req.onerror = () => resolve(null);
+    });
+};
+
+const deleteImageLocally = async (id: string) => {
+    const database = await getImagesDB();
+    const tx = database.transaction(STORE_NAME, 'readwrite');
+    tx.objectStore(STORE_NAME).delete(id);
+};
+
+// --- Firestore & Logic ---
+
 /**
  * Subscribes to canvas items from Firestore.
+ * Automatically resolves local image blobs from IndexedDB.
  */
 export const subscribeToCanvasItems = (callback: (items: CanvasItem[]) => void) => {
   if (!db) {
@@ -31,13 +80,30 @@ export const subscribeToCanvasItems = (callback: (items: CanvasItem[]) => void) 
 
   const q = query(collection(db, COLLECTION_NAME), orderBy('zIndex', 'asc'));
   
-  const unsubscribe = onSnapshot(q, 
-    (snapshot) => {
-        const items = snapshot.docs.map(doc => ({
+  const unsubscribe = onSnapshot(q, async (snapshot) => {
+        const rawItems = snapshot.docs.map(doc => ({
           id: doc.id,
           ...doc.data()
         })) as CanvasItem[];
-        callback(items);
+        
+        // Hydrate images from local DB if needed
+        const resolvedItems = await Promise.all(rawItems.map(async (item) => {
+            // Check if this is a locally stored image
+            if (item.storagePath && item.storagePath.startsWith('local:')) {
+                // Try to get the blob
+                const blob = await getImageLocally(item.storagePath);
+                if (blob) {
+                    return { ...item, url: URL.createObjectURL(blob) };
+                } else {
+                    // Image missing (maybe on another device)
+                    // Keep the placeholder URL or empty
+                    return { ...item, url: '' }; 
+                }
+            }
+            return item;
+        }));
+
+        callback(resolvedItems);
     }, 
     (error) => {
         console.error("Firestore subscription failed:", error);
@@ -48,51 +114,21 @@ export const subscribeToCanvasItems = (callback: (items: CanvasItem[]) => void) 
 };
 
 /**
- * Uploads an image to Firebase Storage with retry logic.
+ * Saves image to Local IndexedDB and returns a reference path.
+ * Replaces the Cloud Storage upload to bypass CORS errors.
  */
 export const uploadImageBlob = async (blob: Blob, fileName: string): Promise<{ url: string, storagePath: string }> => {
-  if (!storage) throw new Error("Firebase Storage not initialized");
-
-  // CRITICAL: Wait for authentication before attempting upload
-  // This prevents 403 errors that look like CORS errors
-  await waitForAuth();
-
-  const uniqueId = crypto.randomUUID();
-  const storagePath = `images/${uniqueId}_${fileName}`;
-  const storageRef = ref(storage, storagePath);
+  // We no longer wait for Auth here because local DB doesn't need it, 
+  // but we still need auth for the subsequent Firestore write.
+  // It's safer to just return success immediately for the file.
   
-  const MAX_RETRIES = 3;
-  let attempt = 0;
-
-  while (attempt < MAX_RETRIES) {
-      try {
-          // 20 second timeout for uploads
-          const timeoutMs = 20000; 
-          const uploadTask = uploadBytes(storageRef, blob);
-          
-          const timeoutPromise = new Promise((_, reject) => 
-              setTimeout(() => reject(new Error("Upload timed out")), timeoutMs)
-          );
-          
-          await Promise.race([uploadTask, timeoutPromise]);
-          const url = await getDownloadURL(storageRef);
-          return { url, storagePath };
-
-      } catch (error: any) {
-          attempt++;
-          console.warn(`Upload attempt ${attempt} failed:`, error);
-          
-          if (attempt >= MAX_RETRIES) {
-              if (error.message?.includes('CORS') || error.code === 'storage/unauthorized') {
-                  console.error("CORS/Auth Error: Ensure your Firebase Storage rules allow reads/writes for authenticated users.");
-              }
-              throw error;
-          }
-          // Wait 1s before retry
-          await new Promise(r => setTimeout(r, 1000));
-      }
-  }
-  throw new Error("Upload failed after retries");
+  const uniqueId = crypto.randomUUID();
+  const storagePath = `local:${uniqueId}`; // Marker for local storage
+  
+  await saveImageLocally(storagePath, blob);
+  
+  const url = URL.createObjectURL(blob);
+  return { url, storagePath };
 };
 
 /**
@@ -113,22 +149,19 @@ export const addCanvasItem = async (item: Omit<CanvasItem, 'id'>) => {
  */
 export const updateCanvasItem = async (id: string, updates: Partial<CanvasItem>) => {
   if (!db) return; 
-  // We don't strictly await auth for updates to keep UI snappy, 
-  // assuming auth is ready if we are seeing items.
   const docRef = doc(db, COLLECTION_NAME, id);
   await updateDoc(docRef, updates);
 };
 
 /**
- * Deletes an item from Firestore and Storage.
+ * Deletes an item from Firestore and Local DB.
  */
 export const deleteCanvasItem = async (id: string, storagePath?: string) => {
   if (!db) return;
 
   await deleteDoc(doc(db, COLLECTION_NAME, id));
   
-  if (storagePath && storage) {
-    const storageRef = ref(storage, storagePath);
-    deleteObject(storageRef).catch(e => console.warn("Failed to delete cloud image:", e));
+  if (storagePath && storagePath.startsWith('local:')) {
+    deleteImageLocally(storagePath).catch(console.error);
   }
 };

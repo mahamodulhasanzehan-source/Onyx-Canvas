@@ -1,6 +1,5 @@
 import { initializeApp } from "firebase/app";
 import { getFirestore, enableIndexedDbPersistence } from "firebase/firestore";
-import { getStorage } from "firebase/storage";
 import { getAuth, signInAnonymously, User } from "firebase/auth";
 
 const firebaseConfig = {
@@ -15,17 +14,15 @@ const firebaseConfig = {
 
 let app;
 let db: any = null;
-let storage: any = null;
 let auth: any = null;
 let authPromise: Promise<User | null> = Promise.resolve(null);
 
 try {
   app = initializeApp(firebaseConfig);
   db = getFirestore(app);
-  storage = getStorage(app);
   auth = getAuth(app);
   
-  console.log("Firebase initialized.");
+  console.log("Firebase initialized (Firestore & Auth only).");
 
   // Enable standard Firestore offline persistence
   enableIndexedDbPersistence(db).catch((err) => {
@@ -36,7 +33,6 @@ try {
       }
   });
   
-  // Create a promise that resolves only when auth is settled (signed in)
   authPromise = new Promise((resolve) => {
       const unsubscribe = auth.onAuthStateChanged((user: User | null) => {
           if (user) {
@@ -57,10 +53,9 @@ try {
   console.error("Firebase initialization critical error:", e);
 }
 
-// Helper to ensure we don't try to read/write before we are logged in
 export const waitForAuth = async () => {
     if (authPromise) return authPromise;
     return null;
 }
 
-export { db, storage, auth };
+export { db, auth };
