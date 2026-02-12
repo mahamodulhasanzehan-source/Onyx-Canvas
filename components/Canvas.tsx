@@ -50,6 +50,14 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
   const lastMousePos = useRef<{x: number, y: number}>({ x: 0, y: 0 });
   const animationFrameRef = useRef<number>(0);
 
+  // --- Touch Logic Refs ---
+  // Store the last touch coordinates for calculating deltas
+  const lastTouchRef = useRef<{ x: number, y: number } | null>(null);
+  // Store the last distance between two fingers for calculating zoom scale
+  const lastPinchDistRef = useRef<number | null>(null);
+  // Track if we are currently performing a gesture to prevent conflicts
+  const isGestureActiveRef = useRef(false);
+
   // Long press refs
   const touchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const touchStartPosRef = useRef<{x: number, y: number} | null>(null);
@@ -86,7 +94,7 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
     }
   }, []);
 
-  // Wheel Zoom Logic
+  // Wheel Zoom Logic (Desktop)
   useEffect(() => {
       const container = containerRef.current;
       if (!container) return;
@@ -118,7 +126,7 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
       return () => container.removeEventListener('wheel', handleWheel);
   }, [updateVisuals]);
 
-  // Panning
+  // Panning (Desktop)
   const handleMouseDown = (e: React.MouseEvent) => {
     if (e.button === 0) { 
       onSelectionChange(null);
@@ -128,42 +136,130 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
     }
   };
 
-  // --- Touch Handling (Long Press for Background) ---
+  // --- Mobile Touch Handling (Pan & Pinch-to-Zoom) ---
+
   const handleTouchStart = (e: React.TouchEvent) => {
-      // Don't interfere if touching an item (handled in CanvasItem or bubbling will be stopped)
-      // But we can check event target if needed. 
-      // For now, we rely on CanvasItem stopping propagation for its own long press.
+      // We do NOT stop propagation here immediately, as we need to support long-press.
+      // However, if 2 fingers are present, we definitely consume the event.
       
-      const touch = e.touches[0];
-      touchStartPosRef.current = { x: touch.clientX, y: touch.clientY };
-      
-      touchTimerRef.current = setTimeout(() => {
-          // Long press detected on background
-          if (navigator.vibrate) navigator.vibrate(50);
-          onCanvasContextMenu({ clientX: touch.clientX, clientY: touch.clientY });
-          touchStartPosRef.current = null; // Clear to prevent panic logic
-      }, 500); // 500ms threshold
+      if (e.touches.length === 1) {
+          // Single touch: Potentially a Pan or a Long Press
+          const touch = e.touches[0];
+          lastTouchRef.current = { x: touch.clientX, y: touch.clientY };
+          touchStartPosRef.current = { x: touch.clientX, y: touch.clientY }; 
+          isGestureActiveRef.current = true;
+          
+          // Start long press timer
+          touchTimerRef.current = setTimeout(() => {
+              if (navigator.vibrate) navigator.vibrate(50);
+              onCanvasContextMenu({ clientX: touch.clientX, clientY: touch.clientY });
+              touchStartPosRef.current = null; 
+              isGestureActiveRef.current = false; // Stop panning if menu opened
+          }, 500); 
+
+      } else if (e.touches.length === 2) {
+          // Two fingers: Pinch Zoom
+          isGestureActiveRef.current = true;
+          
+          // Cancel any pending long press
+          if (touchTimerRef.current) clearTimeout(touchTimerRef.current);
+          touchStartPosRef.current = null;
+
+          // Initialize pinch distance
+          const t1 = e.touches[0];
+          const t2 = e.touches[1];
+          const dist = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
+          lastPinchDistRef.current = dist;
+          lastTouchRef.current = null; // Disable single-finger pan logic while pinching
+      }
   };
 
   const handleTouchMove = (e: React.TouchEvent) => {
-      if (touchStartPosRef.current) {
+      // Prevent browser default behavior (scroll/zoom)
+      // e.preventDefault(); // Note: Passive listener issue might occur if strict, but 'touch-action: none' handles this in CSS usually.
+
+      if (!isGestureActiveRef.current) return;
+
+      if (e.touches.length === 1) {
+          // --- Single Finger Pan ---
           const touch = e.touches[0];
-          const dx = Math.abs(touch.clientX - touchStartPosRef.current.x);
-          const dy = Math.abs(touch.clientY - touchStartPosRef.current.y);
-          
-          // If moved more than 10px, cancel long press
-          if (dx > 10 || dy > 10) {
-              if (touchTimerRef.current) clearTimeout(touchTimerRef.current);
-              touchStartPosRef.current = null;
+          const last = lastTouchRef.current;
+
+          // Check for significant movement to cancel long-press
+          if (touchStartPosRef.current) {
+              const moveDist = Math.hypot(touch.clientX - touchStartPosRef.current.x, touch.clientY - touchStartPosRef.current.y);
+              if (moveDist > 10) {
+                  // Moved too much, cancel long press
+                  if (touchTimerRef.current) clearTimeout(touchTimerRef.current);
+                  touchStartPosRef.current = null;
+              }
           }
+
+          if (last) {
+              const dx = touch.clientX - last.x;
+              const dy = touch.clientY - last.y;
+
+              viewportRef.current.x += dx;
+              viewportRef.current.y += dy;
+              
+              // Use requestAnimationFrame for smooth visual updates
+              cancelAnimationFrame(animationFrameRef.current);
+              animationFrameRef.current = requestAnimationFrame(updateVisuals);
+
+              lastTouchRef.current = { x: touch.clientX, y: touch.clientY };
+          }
+      } else if (e.touches.length === 2) {
+          // --- Two Finger Pinch Zoom ---
+          const t1 = e.touches[0];
+          const t2 = e.touches[1];
+          
+          // Calculate new distance
+          const dist = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
+          
+          // Calculate center of pinch (the pivot point)
+          const cx = (t1.clientX + t2.clientX) / 2;
+          const cy = (t1.clientY + t2.clientY) / 2;
+
+          if (lastPinchDistRef.current && lastPinchDistRef.current > 0) {
+              const scaleFactor = dist / lastPinchDistRef.current;
+              
+              const oldScale = viewportRef.current.scale;
+              const newScale = Math.min(Math.max(oldScale * scaleFactor, 0.05), 50);
+              
+              // To zoom around the pivot point (cx, cy):
+              // The world point under (cx, cy) must remain under (cx, cy) after scaling.
+              // Formula: newPos = pivot - (pivot - oldPos) * (newScale / oldScale)
+              
+              const actualFactor = newScale / oldScale;
+              
+              viewportRef.current.x = cx - (cx - viewportRef.current.x) * actualFactor;
+              viewportRef.current.y = cy - (cy - viewportRef.current.y) * actualFactor;
+              viewportRef.current.scale = newScale;
+
+              setScaleState(newScale);
+              
+              cancelAnimationFrame(animationFrameRef.current);
+              animationFrameRef.current = requestAnimationFrame(updateVisuals);
+          }
+
+          lastPinchDistRef.current = dist;
       }
   };
 
-  const handleTouchEnd = () => {
-      if (touchTimerRef.current) {
-          clearTimeout(touchTimerRef.current);
+  const handleTouchEnd = (e: React.TouchEvent) => {
+      // If we lift fingers and 0 remain, reset everything
+      if (e.touches.length === 0) {
+          if (touchTimerRef.current) clearTimeout(touchTimerRef.current);
+          touchStartPosRef.current = null;
+          isGestureActiveRef.current = false;
+          lastTouchRef.current = null;
+          lastPinchDistRef.current = null;
+      } else if (e.touches.length === 1) {
+          // If we went from 2 fingers to 1, switch back to panning mode anchor
+          const touch = e.touches[0];
+          lastTouchRef.current = { x: touch.clientX, y: touch.clientY };
+          lastPinchDistRef.current = null;
       }
-      touchStartPosRef.current = null;
   };
 
   const handleGlobalMouseMove = useCallback((e: MouseEvent) => {
@@ -238,6 +334,8 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
     <div 
       ref={containerRef}
       className="relative w-full h-screen overflow-hidden bg-canvas-bg cursor-default"
+      // touch-action: none is CRITICAL for custom gestures to work without browser interference
+      style={{ touchAction: 'none' }}
       onMouseDown={handleMouseDown}
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
