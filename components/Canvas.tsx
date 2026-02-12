@@ -1,7 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback, useImperativeHandle, forwardRef } from 'react';
 import { CanvasItem as ICanvasItem, LoadingCanvasItem, Viewport } from '../types';
 import { CanvasItem } from './CanvasItem';
-import { GridBackground } from './GridBackground';
 import { snapToGrid } from '../utils/geometry';
 import { Loader2 } from 'lucide-react';
 
@@ -13,7 +12,7 @@ interface CanvasProps {
   snapEnabled: boolean;
   onSelectionChange: (id: string | null) => void;
   onItemsChange: (items: ICanvasItem[]) => void;
-  onItemUpdate: (id: string, updates: Partial<ICanvasItem>) => void; // New prop for individual updates
+  onItemUpdate: (id: string, updates: Partial<ICanvasItem>) => void;
   onDropFiles: (files: File[], x: number, y: number) => void;
   onEditItem: (item: ICanvasItem) => void;
   onContextMenu: (e: React.MouseEvent, id: string) => void;
@@ -175,17 +174,13 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
   
   const handleDragOver = (e: React.DragEvent) => e.preventDefault();
 
-  // Item Update Wrapper
   const handleUpdateItem = useCallback((id: string, updates: Partial<ICanvasItem>) => {
-      // Calculate snapped values if needed
       let safeUpdates = { ...updates };
       if (snapEnabled) {
           if (safeUpdates.x !== undefined) safeUpdates.x = snapToGrid(safeUpdates.x, 40);
           if (safeUpdates.y !== undefined) safeUpdates.y = snapToGrid(safeUpdates.y, 40);
       }
 
-      // 1. Update local state immediately via props
-      // Use ref to get current items without triggering re-creation of this callback
       const currentItems = itemsRef.current;
       onItemsChange(currentItems.map(item => {
         if (item.id === id) {
@@ -194,10 +189,9 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
         return item;
       }));
 
-      // 2. Trigger persistent update
       onItemUpdate(id, safeUpdates);
 
-  }, [onItemsChange, onItemUpdate, snapEnabled]); // items dependency removed
+  }, [onItemsChange, onItemUpdate, snapEnabled]); 
 
   return (
     <div 
@@ -244,7 +238,7 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
              {loadingItems.map(item => (
                  <div 
                     key={item.id}
-                    className="absolute flex flex-col items-center justify-center p-4 bg-zinc-900/80 border border-zinc-700 rounded-lg backdrop-blur-sm animate-pulse shadow-xl"
+                    className="absolute flex flex-col items-center justify-center p-4 bg-zinc-900/80 border border-zinc-700 rounded-lg backdrop-blur-sm animate-pulse shadow-[0_0_20px_rgba(59,130,246,0.2)]"
                     style={{
                         left: item.x,
                         top: item.y,
@@ -253,7 +247,11 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
                         transform: 'translate(-50%, -50%)' 
                     }}
                  >
-                     <Loader2 className="animate-spin text-blue-500 mb-2" size={24} />
+                     <div className="relative">
+                        <Loader2 className="animate-spin text-blue-500 mb-2" size={32} />
+                        <div className="absolute inset-0 blur-md bg-blue-500/30 rounded-full animate-pulse"></div>
+                     </div>
+                     <span className="text-[10px] text-zinc-400 font-medium uppercase tracking-wider mb-1">Compressing</span>
                      <span className="text-xs text-zinc-300 truncate max-w-full text-center px-2">{item.name}</span>
                  </div>
              ))}
@@ -262,7 +260,7 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
 
       {items.length === 0 && loadingItems.length === 0 && (
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none select-none">
-          <div className="text-zinc-700 text-center animate-pulse">
+          <div className="text-zinc-700 text-center animate-in fade-in slide-in-from-bottom-5 duration-700">
             <p className="text-xl font-medium mb-2">Drag & Drop images here</p>
             <p className="text-sm opacity-60">Zoom with wheel. Pan to explore.</p>
           </div>

@@ -9,11 +9,11 @@ import { CanvasItem, ImageFilters, LoadingCanvasItem, ContextMenuState } from '.
 import { distance } from './utils/geometry';
 import { 
   subscribeToCanvasItems, 
-  uploadImageBlob, 
   addCanvasItem, 
   updateCanvasItem, 
   deleteCanvasItem 
 } from './utils/db';
+import { compressImage } from './utils/imageProcessing';
 import { Loader2 } from 'lucide-react';
 
 const App: React.FC = () => {
@@ -29,7 +29,7 @@ const App: React.FC = () => {
 
   const canvasRef = useRef<CanvasHandle>(null);
 
-  // Subscribe to Firebase Firestore
+  // Subscribe to Firestore
   useEffect(() => {
     const unsubscribe = subscribeToCanvasItems((newItems) => {
       setItems(newItems);
@@ -42,6 +42,7 @@ const App: React.FC = () => {
     let currentX = x;
     let currentY = y;
 
+    // Create temporary loading placeholders
     const newLoadingItems: LoadingCanvasItem[] = files.map((f, index) => ({
         id: `loading-${Date.now()}-${index}`,
         name: f.name,
@@ -50,13 +51,14 @@ const App: React.FC = () => {
     }));
     setLoadingItems(prev => [...prev, ...newLoadingItems]);
 
+    // Process each file
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       const placeholder = newLoadingItems[i];
       let fileToProcess: Blob = file;
       let fileName = file.name;
 
-      // Simple HEIC check
+      // Check for HEIC
       const isHeic = file.name.toLowerCase().endsWith('.heic') || file.type === 'image/heic';
       if (isHeic) {
           try {
@@ -65,7 +67,7 @@ const App: React.FC = () => {
               const converted = await heic2any({
                   blob: file,
                   toType: 'image/jpeg',
-                  quality: 0.9
+                  quality: 0.8
               });
               fileToProcess = Array.isArray(converted) ? converted[0] : converted;
               fileName = fileName.replace(/\.heic$/i, '.jpg');
@@ -74,37 +76,14 @@ const App: React.FC = () => {
               setLoadingItems(prev => prev.filter(p => p.id !== placeholder.id));
               continue; 
           }
-      } else if (!file.type.startsWith('image/') && file.type !== '') {
-          // Allow empty type (some OS don't set it for odd extensions), check extension if needed
-          console.warn("Skipping non-image file:", file.name, file.type);
-          setLoadingItems(prev => prev.filter(p => p.id !== placeholder.id));
-          continue;
       }
 
       try {
-        const { url, storagePath } = await uploadImageBlob(fileToProcess, fileName);
-        
-        // Load image to get dimensions
-        const img = new Image();
-        // REMOVED crossOrigin="anonymous" as it breaks Blob URL loading in some contexts
-        img.src = url;
-        
-        await new Promise<void>((resolve, reject) => { 
-            img.onload = () => resolve(); 
-            img.onerror = (e) => {
-                console.error("Image load failed for URL:", url, e);
-                // We resolve anyway to try and add it with default dims, 
-                // but usually this means the blob is bad.
-                resolve(); 
-            };
-        });
-        
-        const width = img.naturalWidth || 400;
-        const height = img.naturalHeight || 300;
+        // Compress and resize client-side to fit in Firestore
+        const { base64, width, height } = await compressImage(fileToProcess);
 
         await addCanvasItem({
-          storagePath,
-          url, // Note: This URL is temporary for the session, subscription will refresh it
+          url: base64, 
           x: placeholder.x - width / 2,
           y: placeholder.y - height / 2,
           width,
@@ -119,8 +98,9 @@ const App: React.FC = () => {
 
       } catch (e) {
         console.error("FAILED TO ADD IMAGE:", e);
-        alert("Failed to add image. Check console for details.");
+        alert(`Failed to add ${fileName}. It might be corrupted or format unsupported.`);
       } finally {
+          // Remove placeholder
           setLoadingItems(prev => prev.filter(p => p.id !== placeholder.id));
       }
     }
@@ -172,7 +152,7 @@ const App: React.FC = () => {
           setItems(prev => prev.filter(i => i.id !== targetId));
           setSelectedId(null);
           try {
-              await deleteCanvasItem(targetId, item.storagePath);
+              await deleteCanvasItem(targetId);
           } catch (e) {
               console.error("Failed to delete", e);
           }
@@ -218,21 +198,16 @@ const App: React.FC = () => {
       if (!item) return;
 
       try {
-          const { url, storagePath } = await uploadImageBlob(newBlob, item.name + "_edited.jpg");
+          const { base64, width, height } = await compressImage(newBlob);
           
-          const img = new Image();
-          img.src = url;
-          await new Promise(r => img.onload = r);
-
           await updateCanvasItem(id, {
-              url,
-              storagePath,
-              width: img.naturalWidth,
-              height: img.naturalHeight,
+              url: base64,
+              width: width,
+              height: height,
               filters: newFilters,
               rotation: 0,
-              originalWidth: img.naturalWidth,
-              originalHeight: img.naturalHeight,
+              originalWidth: width,
+              originalHeight: height,
           });
 
       } catch (e) {
@@ -327,15 +302,11 @@ const App: React.FC = () => {
       const item = items.find(i => i.id === targetId);
       if (item) {
           try {
-              const response = await fetch(item.url);
-              const blob = await response.blob();
-              const url = window.URL.createObjectURL(blob);
               const a = document.createElement('a');
-              a.href = url;
+              a.href = item.url;
               a.download = (item.name || 'image') + '.jpg';
               document.body.appendChild(a);
               a.click();
-              window.URL.revokeObjectURL(url);
               document.body.removeChild(a);
           } catch (e) {
               console.error("Download failed", e);
@@ -348,8 +319,11 @@ const App: React.FC = () => {
   if (isInitializing) {
       return (
           <div className="h-screen w-full bg-zinc-950 flex flex-col gap-4 items-center justify-center text-white">
-              <Loader2 className="animate-spin text-zinc-700" size={32} />
-              <p className="text-zinc-500 text-sm">Connecting to Canvas...</p>
+              <div className="relative">
+                <Loader2 className="animate-spin text-blue-500" size={48} />
+                <div className="absolute inset-0 animate-pulse bg-blue-500/20 blur-xl rounded-full"></div>
+              </div>
+              <p className="text-zinc-500 text-sm animate-pulse">Initializing Canvas...</p>
           </div>
       )
   }
