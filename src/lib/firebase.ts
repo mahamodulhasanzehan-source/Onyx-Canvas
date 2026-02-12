@@ -1,7 +1,7 @@
 import { initializeApp } from "firebase/app";
 import { getFirestore, enableIndexedDbPersistence } from "firebase/firestore";
 import { getStorage } from "firebase/storage";
-import { getAuth, signInAnonymously } from "firebase/auth";
+import { getAuth, signInAnonymously, User } from "firebase/auth";
 
 const firebaseConfig = {
   apiKey: "AIzaSyBkzJzSzSXvbOaSYs7csHLSp-8EgfEY1QQ",
@@ -17,6 +17,7 @@ let app;
 let db: any = null;
 let storage: any = null;
 let auth: any = null;
+let authPromise: Promise<User | null> = Promise.resolve(null);
 
 try {
   app = initializeApp(firebaseConfig);
@@ -24,26 +25,42 @@ try {
   storage = getStorage(app);
   auth = getAuth(app);
   
-  console.log("Firebase initialized successfully.");
+  console.log("Firebase initialized.");
 
-  // Enable standard Firestore offline persistence (optional, good for spotty wifi)
+  // Enable standard Firestore offline persistence
   enableIndexedDbPersistence(db).catch((err) => {
-      if (err.code == 'failed-precondition') {
+      if (err.code === 'failed-precondition') {
           console.warn('Firebase persistence failed: Multiple tabs open');
-      } else if (err.code == 'unimplemented') {
+      } else if (err.code === 'unimplemented') {
           console.warn('Firebase persistence not supported by browser');
       }
   });
   
-  // Auto sign-in
-  signInAnonymously(auth).then(() => {
-    console.log("Signed in anonymously");
-  }).catch((error) => {
-    console.warn("Anonymous auth failed:", error);
+  // Create a promise that resolves only when auth is settled (signed in)
+  authPromise = new Promise((resolve) => {
+      const unsubscribe = auth.onAuthStateChanged((user: User | null) => {
+          if (user) {
+              console.log("Auth State: Signed in");
+              resolve(user);
+              unsubscribe();
+          } else {
+              console.log("Auth State: Signing in...");
+              signInAnonymously(auth).catch(e => {
+                  console.error("Auto-sign-in failed", e);
+                  resolve(null);
+              });
+          }
+      });
   });
 
 } catch (e) {
   console.error("Firebase initialization critical error:", e);
+}
+
+// Helper to ensure we don't try to read/write before we are logged in
+export const waitForAuth = async () => {
+    if (authPromise) return authPromise;
+    return null;
 }
 
 export { db, storage, auth };
