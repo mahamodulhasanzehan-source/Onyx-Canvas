@@ -15,8 +15,8 @@ export interface ImageFilters {
 
 export interface CanvasItem {
   id: string;
-  url: string; // Blob URL
-  blobId?: number; // IndexedDB key
+  url: string; // Remote Storage URL
+  storagePath?: string; // Firebase Storage reference path
   x: number;
   y: number;
   width: number;

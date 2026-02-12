@@ -13,6 +13,7 @@ interface CanvasProps {
   snapEnabled: boolean;
   onSelectionChange: (id: string | null) => void;
   onItemsChange: (items: ICanvasItem[]) => void;
+  onItemUpdate: (id: string, updates: Partial<ICanvasItem>) => void; // New prop for individual updates
   onDropFiles: (files: File[], x: number, y: number) => void;
   onEditItem: (item: ICanvasItem) => void;
   onContextMenu: (e: React.MouseEvent, id: string) => void;
@@ -32,6 +33,7 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
   snapEnabled,
   onSelectionChange,
   onItemsChange,
+  onItemUpdate,
   onDropFiles,
   onEditItem,
   onContextMenu,
@@ -41,20 +43,20 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
   
   const containerRef = useRef<HTMLDivElement>(null);
   const itemsContainerRef = useRef<HTMLDivElement>(null);
-  const gridRef = useRef<HTMLDivElement>(null); // To access GridBackground instance if needed, or we just pass props
   
-  const [forceUpdate, setForceUpdate] = useState(0); // Trigger re-render for grid when scale changes significantly if needed, but we pass scale prop
-  const [scaleState, setScaleState] = useState(1); // State for GridBackground component to receive updates
+  const [scaleState, setScaleState] = useState(1); 
   
   const [isPanning, setIsPanning] = useState(false);
   const lastMousePos = useRef<{x: number, y: number}>({ x: 0, y: 0 });
   const animationFrameRef = useRef<number>(0);
 
+  // Keep latest items in ref to avoid re-creating handleUpdateItem callback
+  const itemsRef = useRef(items);
+  itemsRef.current = items;
+
   // Expose methods to parent
   useImperativeHandle(ref, () => ({
     flyTo: (x, y, scale) => {
-      // Smooth animation could be implemented here, doing instant for now or basic transition
-      // For instant:
       viewportRef.current = { x, y, scale };
       setScaleState(scale);
       updateVisuals();
@@ -70,21 +72,13 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
         itemsContainerRef.current.style.transformOrigin = '0 0';
     }
     
-    // We update grid via React prop for simplicity as it has complex fading logic inside
-    // But for 60fps pan, we might want to update its position manually too.
-    // The GridBackground component now takes props. To update it without re-render is hard unless we ref it.
-    // For now, let's try to update grid container style directly for PAN, but SCALE requires re-render for grid dots logic?
-    // Actually, we can move the grid container.
+    // Directly update grid for performance
     const gridEl = document.getElementById('grid-bg-layer');
     if (gridEl) {
         gridEl.style.backgroundPosition = `${x}px ${y}px`;
-        // Grid scale is handled by backgroundSize which we can update directly too
         const gridSize = 40 * scale;
         gridEl.style.backgroundSize = `${gridSize}px ${gridSize}px`;
-        // Opacity
-        let opacity = 0.8;
-        if (scale < 0.4) opacity = Math.max(0, (scale - 0.1) / 0.3 * 0.8);
-        gridEl.style.opacity = opacity.toString();
+        gridEl.style.opacity = "0.8";
     }
   }, []);
 
@@ -97,17 +91,13 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
           e.preventDefault();
           const { x, y, scale } = viewportRef.current;
           
-          // Sensitivity
           const delta = -e.deltaY * 0.001;
-          const newScale = Math.min(Math.max(scale * (1 + delta), 0.05), 50); // Limits 0.05x to 50x
+          const newScale = Math.min(Math.max(scale * (1 + delta), 0.05), 50); 
           
-          // Calculate zoom relative to mouse pointer
           const rect = container.getBoundingClientRect();
           const mouseX = e.clientX - rect.left;
           const mouseY = e.clientY - rect.top;
           
-          // Formula: newOffset = mouse - (mouse - oldOffset) * (newScale / oldScale)
-          // Simplified: keeping world point under mouse stationary
           const wx = (mouseX - x) / scale;
           const wy = (mouseY - y) / scale;
           
@@ -116,7 +106,6 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
 
           viewportRef.current = { x: newX, y: newY, scale: newScale };
           
-          // Update visual state
           setScaleState(newScale); 
           updateVisuals();
       };
@@ -128,7 +117,6 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
   // Panning
   const handleMouseDown = (e: React.MouseEvent) => {
     if (e.button === 0) { 
-      // Ensure we didn't click an item (items stop propagation)
       onSelectionChange(null);
       setIsPanning(true);
       lastMousePos.current = { x: e.clientX, y: e.clientY };
@@ -178,7 +166,6 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
     
     const rect = containerRef.current?.getBoundingClientRect();
     if (rect) {
-      // Calculate world coordinates
       const { x, y, scale } = viewportRef.current;
       const worldX = (e.clientX - rect.left - x) / scale;
       const worldY = (e.clientY - rect.top - y) / scale;
@@ -190,18 +177,27 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
 
   // Item Update Wrapper
   const handleUpdateItem = useCallback((id: string, updates: Partial<ICanvasItem>) => {
-    onItemsChange(items.map(item => {
-      if (item.id === id) {
-        let newItem = { ...item, ...updates };
-        if (snapEnabled && (updates.x !== undefined || updates.y !== undefined)) {
-            if (updates.x !== undefined) newItem.x = snapToGrid(newItem.x, 40);
-            if (updates.y !== undefined) newItem.y = snapToGrid(newItem.y, 40);
-        }
-        return newItem;
+      // Calculate snapped values if needed
+      let safeUpdates = { ...updates };
+      if (snapEnabled) {
+          if (safeUpdates.x !== undefined) safeUpdates.x = snapToGrid(safeUpdates.x, 40);
+          if (safeUpdates.y !== undefined) safeUpdates.y = snapToGrid(safeUpdates.y, 40);
       }
-      return item;
-    }));
-  }, [items, onItemsChange, snapEnabled]);
+
+      // 1. Update local state immediately via props
+      // Use ref to get current items without triggering re-creation of this callback
+      const currentItems = itemsRef.current;
+      onItemsChange(currentItems.map(item => {
+        if (item.id === id) {
+          return { ...item, ...safeUpdates };
+        }
+        return item;
+      }));
+
+      // 2. Trigger persistent update
+      onItemUpdate(id, safeUpdates);
+
+  }, [onItemsChange, onItemUpdate, snapEnabled]); // items dependency removed
 
   return (
     <div 
@@ -210,13 +206,13 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
       onMouseDown={handleMouseDown}
       onDragOver={handleDragOver}
       onDrop={handleDrop}
-      onContextMenu={(e) => e.preventDefault()} // Disable default context menu on canvas
+      onContextMenu={(e) => e.preventDefault()} 
     >
-      {/* Grid Layer - using ID for direct manipulation for perf */}
+      {/* Grid Layer */}
       <div id="grid-bg-layer" className="absolute inset-0 pointer-events-none z-0 will-change-[background-position,opacity]"
            style={{
              backgroundImage: 'radial-gradient(circle, #27272a 1.5px, transparent 1.5px)',
-             backgroundSize: `${40 * scaleState}px ${40 * scaleState}px`, // Initial render
+             backgroundSize: `${40 * scaleState}px ${40 * scaleState}px`, 
              backgroundPosition: '0px 0px',
              opacity: 0.8
            }}
@@ -239,13 +235,12 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
                   onUpdate={handleUpdateItem}
                   onEdit={onEditItem}
                   onContextMenu={onContextMenu}
-                  viewportOffset={{x:0, y:0}} // Unused now
+                  viewportOffset={{x:0, y:0}} 
                   isRenaming={renamingId === item.id}
                   onRenameComplete={(name) => onRenameComplete(item.id, name)}
                 />
               ))}
 
-             {/* Loading Placeholders */}
              {loadingItems.map(item => (
                  <div 
                     key={item.id}
@@ -255,7 +250,7 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
                         top: item.y,
                         width: 150,
                         height: 120,
-                        transform: 'translate(-50%, -50%)' // Center on drop point
+                        transform: 'translate(-50%, -50%)' 
                     }}
                  >
                      <Loader2 className="animate-spin text-blue-500 mb-2" size={24} />

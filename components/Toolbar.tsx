@@ -1,5 +1,5 @@
 import React from 'react';
-import { Grid3X3, Minus, Plus, Trash2 } from 'lucide-react';
+import { Grid3X3, Minus, Plus, Trash2, ZoomIn, ZoomOut } from 'lucide-react';
 
 interface ToolbarProps {
   onZoomIn?: () => void;
@@ -11,17 +11,41 @@ interface ToolbarProps {
 }
 
 export const Toolbar: React.FC<ToolbarProps> = ({
+  onZoomIn,
+  onZoomOut,
   snapEnabled,
   onToggleSnap,
   hasSelection,
   onDeleteSelection
 }) => {
   return (
-    <div className="fixed bottom-8 left-1/2 -translate-x-1/2 flex items-center gap-2 px-4 py-2 bg-zinc-900/90 backdrop-blur-md border border-zinc-800 rounded-full shadow-2xl z-50 animate-in slide-in-from-bottom-10 fade-in duration-500">
+    <div className="fixed bottom-8 left-1/2 -translate-x-1/2 flex items-center gap-2 px-4 py-2 bg-zinc-900/90 backdrop-blur-md border border-zinc-800 rounded-full shadow-2xl z-50 animate-in slide-in-from-bottom-10 fade-in duration-500 hover:scale-105 transition-transform">
       
+      {onZoomOut && (
+        <button
+          onClick={onZoomOut}
+          className="p-2 rounded-full text-zinc-400 hover:text-white hover:bg-zinc-800 transition-all active:scale-95"
+          title="Zoom Out"
+        >
+          <ZoomOut size={20} />
+        </button>
+      )}
+
+      {onZoomIn && (
+        <button
+          onClick={onZoomIn}
+          className="p-2 rounded-full text-zinc-400 hover:text-white hover:bg-zinc-800 transition-all active:scale-95"
+          title="Zoom In"
+        >
+          <ZoomIn size={20} />
+        </button>
+      )}
+
+      <div className="w-px h-4 bg-zinc-800 mx-1" />
+
       <button
         onClick={onToggleSnap}
-        className={`p-2 rounded-full transition-all ${
+        className={`p-2 rounded-full transition-all active:scale-95 ${
           snapEnabled 
             ? 'bg-blue-500/20 text-blue-400' 
             : 'text-zinc-400 hover:text-white hover:bg-zinc-800'
@@ -36,7 +60,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
       <button
         onClick={onDeleteSelection}
         disabled={!hasSelection}
-        className={`p-2 rounded-full transition-all flex items-center gap-2 ${
+        className={`p-2 rounded-full transition-all active:scale-95 flex items-center gap-2 ${
           hasSelection
             ? 'text-red-400 hover:bg-red-500/20 hover:text-red-300'
             : 'text-zinc-600 cursor-not-allowed'
@@ -45,12 +69,6 @@ export const Toolbar: React.FC<ToolbarProps> = ({
       >
         <Trash2 size={20} />
       </button>
-      
-      {/* 
-        Zoom buttons could go here, but strictly sticking to prompt "Nothing beyond these features...". 
-        However, infinite canvas usually needs zoom. I'll hide them to respect "Nothing beyond" strictly 
-        unless it's essential. The prompt didn't ask for Zoom. 
-      */}
     </div>
   );
 };

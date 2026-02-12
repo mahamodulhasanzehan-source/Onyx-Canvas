@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Canvas, CanvasHandle } from './components/Canvas';
 import { Toolbar } from './components/Toolbar';
 import { EditModal } from './components/EditModal';
@@ -6,8 +6,14 @@ import { NavigationControls } from './components/NavigationControls';
 import { Sidebar } from './components/Sidebar';
 import { ContextMenu } from './components/ContextMenu';
 import { CanvasItem, ImageFilters, LoadingCanvasItem, ContextMenuState } from './types';
-import { getScaledDimensions, distance } from './utils/geometry';
-import { saveImageBlob, getImageBlob, deleteImageBlob } from './utils/db';
+import { distance } from './utils/geometry';
+import { 
+  subscribeToCanvasItems, 
+  uploadImageBlob, 
+  addCanvasItem, 
+  updateCanvasItem, 
+  deleteCanvasItem 
+} from './utils/db';
 import { Loader2 } from 'lucide-react';
 
 const App: React.FC = () => {
@@ -17,75 +23,32 @@ const App: React.FC = () => {
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [snapEnabled, setSnapEnabled] = useState(false);
   const [itemToEdit, setItemToEdit] = useState<CanvasItem | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [isInitializing, setIsInitializing] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [contextMenu, setContextMenu] = useState<ContextMenuState>({ isOpen: false, x: 0, y: 0, itemId: '' });
 
   const canvasRef = useRef<CanvasHandle>(null);
 
-  // Load items from local storage/IndexedDB on mount
+  // Subscribe to Firebase Firestore
   useEffect(() => {
-    const loadItems = async () => {
-      try {
-        const stored = localStorage.getItem('onyx_items');
-        if (stored) {
-          const parsedItems: CanvasItem[] = JSON.parse(stored);
-          const hydrated = await Promise.all(parsedItems.map(async (item) => {
-             if (item.blobId) {
-                 const blob = await getImageBlob(item.blobId);
-                 if (blob) {
-                     return { ...item, url: URL.createObjectURL(blob) };
-                 }
-             }
-             return item; 
-          }));
-          setItems(hydrated);
-        }
-      } catch (error) {
-        console.error("Failed to load items", error);
-      } finally {
-        setLoading(false);
-      }
-    };
-    loadItems();
+    const unsubscribe = subscribeToCanvasItems((newItems) => {
+      setItems(newItems);
+      setIsInitializing(false);
+    });
+    return () => unsubscribe();
   }, []);
 
-  useEffect(() => {
-    if (!loading) {
-        const toSave = items.map(({ url, ...rest }) => rest);
-        localStorage.setItem('onyx_items', JSON.stringify(toSave));
-    }
-  }, [items, loading]);
-
-  // Keyboard Shortcuts
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Delete' || e.key === 'Backspace') {
-        if (selectedId && !renamingId) {
-            handleDeleteSelection();
-        }
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedId, renamingId, items]);
-
-  const handleDropFiles = async (files: File[], x: number, y: number) => {
+  const handleDropFiles = useCallback(async (files: File[], x: number, y: number) => {
     let currentX = x;
     let currentY = y;
 
-    // Create placeholders
-    const newLoadingItems: LoadingCanvasItem[] = files.map(f => ({
-        id: crypto.randomUUID(), // Temp ID
+    const newLoadingItems: LoadingCanvasItem[] = files.map((f, index) => ({
+        id: `loading-${Date.now()}-${index}`,
         name: f.name,
-        x: currentX,
-        y: currentY // We will stagger real placement, but keep loading stack simple
+        x: currentX + (index * 20),
+        y: currentY + (index * 20)
     }));
     setLoadingItems(prev => [...prev, ...newLoadingItems]);
-
-    // Process sequentially to keep order but could be parallel
-    // We use a separate index to stagger processing if needed
-    let processedCount = 0;
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
@@ -101,13 +64,12 @@ const App: React.FC = () => {
               const converted = await heic2any({
                   blob: file,
                   toType: 'image/jpeg',
-                  quality: 1.0 // High quality
+                  quality: 1.0 
               });
               fileToProcess = Array.isArray(converted) ? converted[0] : converted;
               fileName = fileName.replace(/\.heic$/i, '.jpg');
           } catch (e) {
               console.error("HEIC conversion failed", e);
-              // Remove placeholder if failed
               setLoadingItems(prev => prev.filter(p => p.id !== placeholder.id));
               continue; 
           }
@@ -117,27 +79,20 @@ const App: React.FC = () => {
       }
 
       try {
-        const blobId = await saveImageBlob(fileToProcess);
-        const url = URL.createObjectURL(fileToProcess);
+        const { url, storagePath } = await uploadImageBlob(fileToProcess, fileName);
         
         const img = new Image();
         img.src = url;
         await new Promise((resolve) => { img.onload = resolve; });
         
-        // Use natural dimensions
         const width = img.naturalWidth;
         const height = img.naturalHeight;
 
-        // Use placeholder position, stagger slightly if multiple
-        const finalX = currentX + (processedCount * 50);
-        const finalY = currentY + (processedCount * 50);
-
-        const newItem: CanvasItem = {
-          id: crypto.randomUUID(),
-          blobId,
+        await addCanvasItem({
+          storagePath,
           url,
-          x: finalX - width / 2, // Center on mouse
-          y: finalY - height / 2,
+          x: placeholder.x - width / 2,
+          y: placeholder.y - height / 2,
           width,
           height,
           originalWidth: img.naturalWidth,
@@ -145,18 +100,53 @@ const App: React.FC = () => {
           rotation: 0,
           name: fileName.split('.')[0] || 'Untitled',
           filters: { brightness: 100, contrast: 100 },
-          zIndex: items.length + 1
-        };
+          zIndex: Date.now()
+        });
 
-        setItems(prev => [...prev, newItem]);
-        processedCount++;
       } catch (e) {
         console.error("Failed to add image", e);
+        alert("Failed to upload image. Please check your connection or quota.");
       } finally {
-          // Remove specific placeholder
           setLoadingItems(prev => prev.filter(p => p.id !== placeholder.id));
       }
     }
+  }, []);
+
+  // Paste Handling
+  useEffect(() => {
+    const handlePaste = async (e: ClipboardEvent) => {
+        if (renamingId) return;
+        const clipboardItems = e.clipboardData?.items;
+        if (!clipboardItems) return;
+
+        const files: File[] = [];
+        for (let i = 0; i < clipboardItems.length; i++) {
+            if (clipboardItems[i].type.indexOf('image') !== -1) {
+                const file = clipboardItems[i].getAsFile();
+                if (file) files.push(file);
+            }
+        }
+
+        if (files.length > 0 && canvasRef.current) {
+            const viewport = canvasRef.current.getViewport();
+            const cx = window.innerWidth / 2;
+            const cy = window.innerHeight / 2;
+            const wx = (cx - viewport.x) / viewport.scale;
+            const wy = (cy - viewport.y) / viewport.scale;
+            await handleDropFiles(files, wx, wy);
+        }
+    };
+    window.addEventListener('paste', handlePaste);
+    return () => window.removeEventListener('paste', handlePaste);
+  }, [renamingId, handleDropFiles]);
+
+  const handleItemUpdate = async (id: string, updates: Partial<CanvasItem>) => {
+      setItems(prev => prev.map(i => i.id === id ? { ...i, ...updates } : i));
+      try {
+          await updateCanvasItem(id, updates);
+      } catch (e) {
+          console.error("Failed to update item", e);
+      }
   };
 
   const handleDeleteSelection = async () => {
@@ -164,52 +154,83 @@ const App: React.FC = () => {
       if (!targetId) return;
       
       const item = items.find(i => i.id === targetId);
-      if (item && item.blobId) {
-          await deleteImageBlob(item.blobId);
+      if (item) {
+          setItems(prev => prev.filter(i => i.id !== targetId));
+          setSelectedId(null);
+          try {
+              await deleteCanvasItem(targetId, item.storagePath);
+          } catch (e) {
+              console.error("Failed to delete", e);
+          }
       }
-      setItems(prev => prev.filter(i => i.id !== targetId));
-      setSelectedId(null);
+  };
+
+  // Keyboard Shortcuts (Delete, Nudge)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (selectedId && !renamingId) {
+          if (e.key === 'Delete' || e.key === 'Backspace') {
+              handleDeleteSelection();
+          }
+
+          // Arrow Key Nudging
+          if (e.key.startsWith('Arrow')) {
+              e.preventDefault();
+              const nudge = e.shiftKey ? 10 : 1;
+              const current = items.find(i => i.id === selectedId);
+              if (current) {
+                  let updates = {};
+                  if (e.key === 'ArrowLeft') updates = { x: current.x - nudge };
+                  if (e.key === 'ArrowRight') updates = { x: current.x + nudge };
+                  if (e.key === 'ArrowUp') updates = { y: current.y - nudge };
+                  if (e.key === 'ArrowDown') updates = { y: current.y + nudge };
+                  
+                  if (Object.keys(updates).length > 0) {
+                      handleItemUpdate(selectedId, updates);
+                  }
+              }
+          }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [selectedId, renamingId, items]);
+
+  const handleUpdateItems = (newItems: CanvasItem[]) => {
+      setItems(newItems);
   };
 
   const handleEditSave = async (id: string, newBlob: Blob, newFilters: ImageFilters, newRotation: number) => {
-      const newBlobId = await saveImageBlob(newBlob);
-      const newUrl = URL.createObjectURL(newBlob);
-      const img = new Image();
-      img.src = newUrl;
-      await new Promise(r => img.onload = r);
+      const item = items.find(i => i.id === id);
+      if (!item) return;
 
-      setItems(prev => prev.map(item => {
-          if (item.id === id) {
-              if (item.url) URL.revokeObjectURL(item.url);
-              // Maintain visual size approx? No, update to new crop size
-              return {
-                  ...item,
-                  blobId: newBlobId,
-                  url: newUrl,
-                  width: img.naturalWidth,
-                  height: img.naturalHeight,
-                  filters: newFilters,
-                  rotation: 0,
-                  originalWidth: img.naturalWidth,
-                  originalHeight: img.naturalHeight,
-              };
-          }
-          return item;
-      }));
+      try {
+          const { url, storagePath } = await uploadImageBlob(newBlob, item.name + "_edited.jpg");
+          
+          const img = new Image();
+          img.src = url;
+          await new Promise(r => img.onload = r);
+
+          await updateCanvasItem(id, {
+              url,
+              storagePath,
+              width: img.naturalWidth,
+              height: img.naturalHeight,
+              filters: newFilters,
+              rotation: 0,
+              originalWidth: img.naturalWidth,
+              originalHeight: img.naturalHeight,
+          });
+
+      } catch (e) {
+          console.error("Failed to save edit", e);
+          alert("Failed to save changes.");
+      }
   };
 
   const handleFindClosest = () => {
     if (!canvasRef.current || items.length === 0) return;
-    
     const viewport = canvasRef.current.getViewport();
-    // Center of viewport in world coordinates
-    // We can't easily calculate exact viewport center in world coords without container dims,
-    // but we can approximate using the viewport x/y which are top-left offsets usually?
-    // In our Canvas implementation: transform is translate(x, y) scale(s).
-    // So top-left of world is (-x/s, -y/s).
-    // Center screen is approx (window.innerWidth/2, window.innerHeight/2).
-    // World Center = (ScreenCenter - Translate) / Scale.
-    
     const screenCenterX = window.innerWidth / 2;
     const screenCenterY = window.innerHeight / 2;
     const worldCenterX = (screenCenterX - viewport.x) / viewport.scale;
@@ -228,19 +249,12 @@ const App: React.FC = () => {
         }
     });
 
-    // Fly to it
-    // We want item center to be at screen center
     const itemCenterX = closestItem.x + closestItem.width / 2;
     const itemCenterY = closestItem.y + closestItem.height / 2;
     
-    // New Transform:
-    // Scale should probably reset or adjust? Let's zoom in to fit item or just comfortable zoom
-    // Comfortable zoom: 1.0 or fit screen? Let's go with 0.5 or 1 depending on size.
-    // Let's preserve current scale unless it's too far out.
     let targetScale = Math.max(viewport.scale, 0.2); 
     if (targetScale > 2) targetScale = 1;
     
-    // x = ScreenCenter - WorldItemCenter * scale
     const newX = screenCenterX - itemCenterX * targetScale;
     const newY = screenCenterY - itemCenterY * targetScale;
     
@@ -249,18 +263,17 @@ const App: React.FC = () => {
 
   const handleSidebarItemClick = (item: CanvasItem) => {
       if (!canvasRef.current) return;
-      // Center item
       const screenCenterX = window.innerWidth / 2;
       const screenCenterY = window.innerHeight / 2;
       const itemCenterX = item.x + item.width / 2;
       const itemCenterY = item.y + item.height / 2;
       
-      const targetScale = 0.5; // Good overview zoom
+      const targetScale = 0.5; 
       const newX = screenCenterX - itemCenterX * targetScale;
       const newY = screenCenterY - itemCenterY * targetScale;
       
       canvasRef.current.flyTo(newX, newY, targetScale);
-      setSidebarOpen(false); // Optional: close sidebar on selection
+      setSidebarOpen(false);
       setSelectedId(item.id);
   };
 
@@ -274,20 +287,56 @@ const App: React.FC = () => {
     });
   };
 
-  const handleRenameStart = () => {
-    setRenamingId(contextMenu.itemId);
-    setContextMenu({ ...contextMenu, isOpen: false });
-  };
-
-  const handleRenameComplete = (id: string, newName: string) => {
-      setItems(prev => prev.map(i => i.id === id ? { ...i, name: newName } : i));
+  const handleRenameComplete = async (id: string, newName: string) => {
       setRenamingId(null);
+      await updateCanvasItem(id, { name: newName });
   };
 
-  if (loading) {
+  const handleZoomIn = () => {
+    if (canvasRef.current) {
+      const { x, y, scale } = canvasRef.current.getViewport();
+      const newScale = Math.min(scale * 1.2, 50);
+      canvasRef.current.flyTo(x, y, newScale);
+    }
+  };
+
+  const handleZoomOut = () => {
+    if (canvasRef.current) {
+      const { x, y, scale } = canvasRef.current.getViewport();
+      const newScale = Math.max(scale / 1.2, 0.05);
+      canvasRef.current.flyTo(x, y, newScale);
+    }
+  };
+
+  const handleDownload = async () => {
+      const targetId = selectedId || contextMenu.itemId;
+      if (!targetId) return;
+      const item = items.find(i => i.id === targetId);
+      if (item) {
+          try {
+              const response = await fetch(item.url);
+              const blob = await response.blob();
+              const url = window.URL.createObjectURL(blob);
+              const a = document.createElement('a');
+              a.href = url;
+              a.download = (item.name || 'image') + '.jpg';
+              document.body.appendChild(a);
+              a.click();
+              window.URL.revokeObjectURL(url);
+              document.body.removeChild(a);
+          } catch (e) {
+              console.error("Download failed", e);
+              window.open(item.url, '_blank');
+          }
+      }
+      setContextMenu(prev => ({...prev, isOpen: false}));
+  };
+
+  if (isInitializing) {
       return (
-          <div className="h-screen w-full bg-zinc-950 flex items-center justify-center text-white">
+          <div className="h-screen w-full bg-zinc-950 flex flex-col gap-4 items-center justify-center text-white">
               <Loader2 className="animate-spin text-zinc-700" size={32} />
+              <p className="text-zinc-500 text-sm">Connecting to Canvas...</p>
           </div>
       )
   }
@@ -314,7 +363,8 @@ const App: React.FC = () => {
         renamingId={renamingId}
         snapEnabled={snapEnabled}
         onSelectionChange={setSelectedId}
-        onItemsChange={setItems}
+        onItemsChange={handleUpdateItems} 
+        onItemUpdate={handleItemUpdate}   
         onDropFiles={handleDropFiles}
         onEditItem={setItemToEdit}
         onContextMenu={handleContextMenu}
@@ -326,6 +376,8 @@ const App: React.FC = () => {
         onToggleSnap={() => setSnapEnabled(!snapEnabled)}
         hasSelection={!!selectedId}
         onDeleteSelection={handleDeleteSelection}
+        onZoomIn={handleZoomIn}
+        onZoomOut={handleZoomOut}
       />
 
       {itemToEdit && (
@@ -341,8 +393,9 @@ const App: React.FC = () => {
         <ContextMenu 
             x={contextMenu.x}
             y={contextMenu.y}
-            onRename={handleRenameStart}
+            onRename={() => { setRenamingId(contextMenu.itemId); setContextMenu(p => ({...p, isOpen:false})); }}
             onDelete={() => { handleDeleteSelection(); setContextMenu(prev => ({ ...prev, isOpen: false })); }}
+            onDownload={handleDownload}
             onClose={() => setContextMenu(prev => ({ ...prev, isOpen: false }))}
         />
       )}

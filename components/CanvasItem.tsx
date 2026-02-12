@@ -1,13 +1,14 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { CanvasItem as ICanvasItem, ResizeHandle, Point } from '../types';
 
-interface CanvasItemProps {
+export interface CanvasItemProps {
   item: ICanvasItem;
   isSelected: boolean;
   scale: number;
   onSelect: (id: string) => void;
   onUpdate: (id: string, updates: Partial<ICanvasItem>) => void;
   onContextMenu: (e: React.MouseEvent, id: string) => void;
+  onEdit?: (item: ICanvasItem) => void;
   viewportOffset: Point;
   isRenaming?: boolean;
   onRenameComplete?: (newName: string) => void;
@@ -20,6 +21,7 @@ export const CanvasItem: React.FC<CanvasItemProps> = ({
   onSelect,
   onUpdate,
   onContextMenu,
+  onEdit,
   isRenaming,
   onRenameComplete
 }) => {
@@ -37,6 +39,12 @@ export const CanvasItem: React.FC<CanvasItemProps> = ({
   const [nameInput, setNameInput] = useState(item.name);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  // Refs for event listeners to avoid re-binding
+  const itemRef = useRef(item);
+  itemRef.current = item;
+  const scaleRef = useRef(scale);
+  scaleRef.current = scale;
+
   useEffect(() => {
       if (isRenaming && inputRef.current) {
           inputRef.current.focus();
@@ -53,6 +61,11 @@ export const CanvasItem: React.FC<CanvasItemProps> = ({
         setIsDragging(true);
         setDragStart({ x: e.clientX, y: e.clientY });
     }
+  };
+
+  const handleDoubleClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (onEdit) onEdit(item);
   };
 
   const handleResizeStart = (e: React.MouseEvent, handle: ResizeHandle) => {
@@ -73,20 +86,23 @@ export const CanvasItem: React.FC<CanvasItemProps> = ({
   // Global Drag/Resize
   useEffect(() => {
     const handleGlobalMove = (e: MouseEvent) => {
+      const currentScale = scaleRef.current;
+      const currentItem = itemRef.current;
+
       if (isDragging && dragStart) {
-        const dx = (e.clientX - dragStart.x) / scale;
-        const dy = (e.clientY - dragStart.y) / scale;
+        const dx = (e.clientX - dragStart.x) / currentScale;
+        const dy = (e.clientY - dragStart.y) / currentScale;
         
-        onUpdate(item.id, {
-          x: item.x + dx,
-          y: item.y + dy
+        onUpdate(currentItem.id, {
+          x: currentItem.x + dx,
+          y: currentItem.y + dy
         });
         setDragStart({ x: e.clientX, y: e.clientY });
       }
 
       if (isResizing && resizeStart) {
-        const dx = (e.clientX - resizeStart.startX) / scale;
-        const dy = (e.clientY - resizeStart.startY) / scale;
+        const dx = (e.clientX - resizeStart.startX) / currentScale;
+        const dy = (e.clientY - resizeStart.startY) / currentScale;
         
         let newW = resizeStart.origW;
         let newH = resizeStart.origH;
@@ -116,7 +132,7 @@ export const CanvasItem: React.FC<CanvasItemProps> = ({
             }
         }
 
-        onUpdate(item.id, { x: newX, y: newY, width: newW, height: newH });
+        onUpdate(currentItem.id, { x: newX, y: newY, width: newW, height: newH });
       }
     };
 
@@ -135,8 +151,8 @@ export const CanvasItem: React.FC<CanvasItemProps> = ({
       window.removeEventListener('mousemove', handleGlobalMove);
       window.removeEventListener('mouseup', handleUp);
     };
-  }, [isDragging, isResizing, dragStart, resizeStart, item, onUpdate, scale]);
-
+  }, [isDragging, isResizing, dragStart, resizeStart, onUpdate]); 
+  // removed item and scale from deps to prevent effect churn, using refs instead
 
   const handleNameKeyDown = (e: React.KeyboardEvent) => {
       if (e.key === 'Enter') {
@@ -154,7 +170,7 @@ export const CanvasItem: React.FC<CanvasItemProps> = ({
 
   return (
     <div
-      className={`absolute group select-none ${isSelected ? 'z-20' : 'z-10'}`}
+      className={`absolute group select-none animate-in fade-in zoom-in-95 duration-300 ${isSelected ? 'z-20' : 'z-10'}`}
       style={{
         transform: `translate(${item.x}px, ${item.y}px)`,
         width: item.width,
@@ -162,9 +178,10 @@ export const CanvasItem: React.FC<CanvasItemProps> = ({
         cursor: isDragging ? 'grabbing' : 'grab',
       }}
       onMouseDown={handleMouseDown}
+      onDoubleClick={handleDoubleClick}
       onContextMenu={(e) => onContextMenu(e, item.id)}
     >
-      <div className={`w-full h-full relative transition-shadow duration-200 ${isSelected ? 'ring-2 ring-blue-500 shadow-[0_0_30px_rgba(59,130,246,0.2)]' : 'hover:ring-1 hover:ring-white/30'}`}>
+      <div className={`w-full h-full relative transition-all duration-200 ${isSelected ? 'ring-2 ring-blue-500 shadow-[0_0_30px_rgba(59,130,246,0.3)]' : 'hover:ring-1 hover:ring-white/50 hover:shadow-lg'}`}>
         <img
           src={item.url}
           alt={item.name}
@@ -178,10 +195,10 @@ export const CanvasItem: React.FC<CanvasItemProps> = ({
         
         {isSelected && (
             <>
-                <div style={{ width: handleSize, height: handleSize, top: handleOffset, left: handleOffset }} className="absolute bg-blue-500 rounded-full cursor-nw-resize hover:scale-125 transition-transform" onMouseDown={(e) => handleResizeStart(e, 'nw')} />
-                <div style={{ width: handleSize, height: handleSize, top: handleOffset, right: handleOffset }} className="absolute bg-blue-500 rounded-full cursor-ne-resize hover:scale-125 transition-transform" onMouseDown={(e) => handleResizeStart(e, 'ne')} />
-                <div style={{ width: handleSize, height: handleSize, bottom: handleOffset, left: handleOffset }} className="absolute bg-blue-500 rounded-full cursor-sw-resize hover:scale-125 transition-transform" onMouseDown={(e) => handleResizeStart(e, 'sw')} />
-                <div style={{ width: handleSize, height: handleSize, bottom: handleOffset, right: handleOffset }} className="absolute bg-blue-500 rounded-full cursor-se-resize hover:scale-125 transition-transform" onMouseDown={(e) => handleResizeStart(e, 'se')} />
+                <div style={{ width: handleSize, height: handleSize, top: handleOffset, left: handleOffset }} className="absolute bg-blue-500 rounded-full cursor-nw-resize hover:scale-150 transition-transform shadow-sm" onMouseDown={(e) => handleResizeStart(e, 'nw')} />
+                <div style={{ width: handleSize, height: handleSize, top: handleOffset, right: handleOffset }} className="absolute bg-blue-500 rounded-full cursor-ne-resize hover:scale-150 transition-transform shadow-sm" onMouseDown={(e) => handleResizeStart(e, 'ne')} />
+                <div style={{ width: handleSize, height: handleSize, bottom: handleOffset, left: handleOffset }} className="absolute bg-blue-500 rounded-full cursor-sw-resize hover:scale-150 transition-transform shadow-sm" onMouseDown={(e) => handleResizeStart(e, 'sw')} />
+                <div style={{ width: handleSize, height: handleSize, bottom: handleOffset, right: handleOffset }} className="absolute bg-blue-500 rounded-full cursor-se-resize hover:scale-150 transition-transform shadow-sm" onMouseDown={(e) => handleResizeStart(e, 'se')} />
             </>
         )}
       </div>
@@ -195,12 +212,12 @@ export const CanvasItem: React.FC<CanvasItemProps> = ({
                 onKeyDown={handleNameKeyDown}
                 onBlur={handleNameBlur}
                 onMouseDown={(e) => e.stopPropagation()} 
-                className="bg-zinc-900/90 text-white text-xs px-2 py-1 rounded border border-blue-500 outline-none text-center min-w-[60px]"
+                className="bg-zinc-900/90 text-white text-xs px-2 py-1 rounded border border-blue-500 outline-none text-center min-w-[60px] shadow-xl"
                 style={{ transform: `scale(${1/scale})`, transformOrigin: 'top center' }}
             />
         ) : (
             <div 
-                className="text-zinc-400 text-xs px-2 py-0.5 rounded bg-zinc-950/50 backdrop-blur-sm text-center truncate max-w-[200px]"
+                className="text-zinc-400 text-xs px-2 py-0.5 rounded bg-zinc-950/50 backdrop-blur-sm text-center truncate max-w-[200px] opacity-0 group-hover:opacity-100 transition-opacity delay-100"
                 style={{ transform: `scale(${1/scale})`, transformOrigin: 'top center' }}
             >
                 {item.name}

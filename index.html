@@ -52,27 +52,6 @@
         overflow: auto;
       }
     </style>
-    <!-- 
-      IMPORT MAP FIXES:
-      1. STRICTLY pinned all React imports to 18.3.1.
-      2. REMOVED React 19 mappings that caused ERESOLVE and Runtime Error #31.
-    -->
-    <script type="importmap">
-{
-  "imports": {
-    "react": "https://esm.sh/react@18.3.1",
-    "react/jsx-runtime": "https://esm.sh/react@18.3.1/jsx-runtime",
-    "react-dom/client": "https://esm.sh/react-dom@18.3.1/client",
-    "react-dom": "https://esm.sh/react-dom@18.3.1",
-    "lucide-react": "https://esm.sh/lucide-react@0.344.0",
-    "heic2any": "https://esm.sh/heic2any@0.0.4",
-    "react-dom/": "https://esm.sh/react-dom@^19.2.4/",
-    "react/": "https://esm.sh/react@^19.2.4/",
-    "@vitejs/plugin-react": "https://esm.sh/@vitejs/plugin-react@^5.1.4",
-    "vite": "https://esm.sh/vite@^7.3.1"
-  }
-}
-</script>
     <!-- Global Error Handler to catch crash-on-load issues -->
     <script>
       window.addEventListener('error', function(event) {
@@ -91,7 +70,21 @@
         }
       });
     </script>
-  </head>
+<script type="importmap">
+{
+  "imports": {
+    "react": "https://esm.sh/react@^19.2.4",
+    "react-dom/": "https://esm.sh/react-dom@^19.2.4/",
+    "react/": "https://esm.sh/react@^19.2.4/",
+    "firebase/": "https://esm.sh/firebase@^12.9.0/",
+    "lucide-react": "https://esm.sh/lucide-react@^0.563.0",
+    "heic2any": "https://esm.sh/heic2any@^0.0.4",
+    "vite": "https://esm.sh/vite@^7.3.1",
+    "@vitejs/plugin-react": "https://esm.sh/@vitejs/plugin-react@^5.1.4"
+  }
+}
+</script>
+</head>
   <body>
     <div id="root"></div>
     <div id="error-overlay"></div>
