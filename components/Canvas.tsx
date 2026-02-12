@@ -139,9 +139,11 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
   // --- Mobile Touch Handling (Pan & Pinch-to-Zoom) ---
 
   const handleTouchStart = (e: React.TouchEvent) => {
-      // We do NOT stop propagation here immediately, as we need to support long-press.
-      // However, if 2 fingers are present, we definitely consume the event.
-      
+      // Ignore if touching an item directly
+      if ((e.target as HTMLElement).closest('.canvas-item')) {
+          return;
+      }
+
       if (e.touches.length === 1) {
           // Single touch: Potentially a Pan or a Long Press
           const touch = e.touches[0];

@@ -6,7 +6,7 @@ import { NavigationControls } from './components/NavigationControls';
 import { Sidebar } from './components/Sidebar';
 import { ContextMenu } from './components/ContextMenu';
 import { CanvasItem, ImageFilters, LoadingCanvasItem, ContextMenuState } from './types';
-import { distance } from './utils/geometry';
+import { distance, isColliding } from './utils/geometry';
 import { 
   subscribeToCanvasItems, 
   addCanvasItem, 
@@ -82,11 +82,30 @@ const App: React.FC = () => {
       try {
         // Compress and resize client-side to fit in Firestore
         const { base64, width, height } = await compressImage(fileToProcess);
+        
+        // COLLISION RESOLUTION
+        // Find a spot that doesn't overlap
+        const gridSize = 40;
+        let finalX = placeholder.x - width / 2;
+        let finalY = placeholder.y - height / 2;
+        
+        // Optional: Snap starting position for cleanliness
+        finalX = Math.round(finalX / gridSize) * gridSize;
+        finalY = Math.round(finalY / gridSize) * gridSize;
+
+        // Spiral/Scan for empty space
+        // We limit attempts to prevent infinite loops in crowded canvases
+        let attempts = 0;
+        while (isColliding({ x: finalX, y: finalY, width, height }, items, '') && attempts < 100) {
+            finalX += gridSize;
+            finalY += gridSize;
+            attempts++;
+        }
 
         await addCanvasItem({
           url: base64, 
-          x: placeholder.x - width / 2,
-          y: placeholder.y - height / 2,
+          x: finalX,
+          y: finalY,
           width,
           height,
           originalWidth: width,
@@ -105,7 +124,7 @@ const App: React.FC = () => {
           setLoadingItems(prev => prev.filter(p => p.id !== placeholder.id));
       }
     }
-  }, []);
+  }, [items]); // Added items dependency for collision check
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
       if (e.target.files && e.target.files.length > 0 && canvasRef.current) {

@@ -328,7 +328,7 @@ export const CanvasItem: React.FC<CanvasItemProps> = memo(({
 
   return (
     <div
-      className={`absolute group select-none animate-in fade-in zoom-in-95 ${transitionClass} ${isSelected ? 'z-20' : 'z-10'}`}
+      className={`canvas-item absolute group select-none animate-in fade-in zoom-in-95 ${transitionClass} ${isSelected ? 'z-20' : 'z-10'}`}
       style={{
         transform: `translate(${displayX}px, ${displayY}px)`,
         width: displayW,
