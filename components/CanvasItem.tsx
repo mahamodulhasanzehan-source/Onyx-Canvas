@@ -1,10 +1,11 @@
 import React, { useState, useRef, useEffect, memo } from 'react';
 import { CanvasItem as ICanvasItem, ResizeHandle, Point } from '../types';
 import { ImageOff } from 'lucide-react';
-import { snapToGrid } from '../utils/geometry';
+import { snapToGrid, isColliding } from '../utils/geometry';
 
 export interface CanvasItemProps {
   item: ICanvasItem;
+  items: ICanvasItem[]; // Need all items for collision detection
   isSelected: boolean;
   scale: number;
   snapEnabled: boolean;
@@ -19,6 +20,7 @@ export interface CanvasItemProps {
 
 export const CanvasItem: React.FC<CanvasItemProps> = memo(({
   item,
+  items,
   isSelected,
   scale,
   snapEnabled,
@@ -143,6 +145,7 @@ export const CanvasItem: React.FC<CanvasItemProps> = memo(({
     const handleGlobalMove = (e: MouseEvent) => {
       const currentScale = scaleRef.current;
       const startItem = initialDragItemRef.current;
+      const gridSize = 40;
 
       if (!startItem) return;
 
@@ -154,54 +157,125 @@ export const CanvasItem: React.FC<CanvasItemProps> = memo(({
         let newY = startItem.y + dy;
 
         if (snapEnabled) {
-            newX = snapToGrid(newX, 40);
-            newY = snapToGrid(newY, 40);
+            newX = snapToGrid(newX, gridSize);
+            newY = snapToGrid(newY, gridSize);
         }
         
-        // Update ONLY local state
-        setLocalState({ x: newX, y: newY });
+        // COLLISION CHECK
+        const candidate = {
+            x: newX,
+            y: newY,
+            width: startItem.width,
+            height: startItem.height
+        };
+
+        if (!isColliding(candidate, items, item.id)) {
+            setLocalState({ x: newX, y: newY });
+        }
       }
 
       if (isResizing && resizeStart) {
         const dx = (e.clientX - resizeStart.startX) / currentScale;
         const dy = (e.clientY - resizeStart.startY) / currentScale;
         
+        // Initial calculations based on resize handle
         let newW = resizeStart.origW;
         let newH = resizeStart.origH;
         let newX = resizeStart.origX;
         let newY = resizeStart.origY;
+        
         const aspectRatio = resizeStart.origW / resizeStart.origH;
         const isShift = e.shiftKey; 
 
-        if (resizeStart.handle.includes('e')) newW = Math.max(50, resizeStart.origW + dx);
+        // Apply Delta based on handle
+        if (resizeStart.handle.includes('e')) newW = resizeStart.origW + dx;
         if (resizeStart.handle.includes('w')) {
-            const possibleW = resizeStart.origW - dx;
-            if (possibleW > 50) { newW = possibleW; newX = resizeStart.origX + dx; }
+             // For left handles, we change X and Width
+             const rawNewX = resizeStart.origX + dx;
+             const rawNewW = resizeStart.origW - dx;
+             // Temporarily set them, snap logic comes later
+             newX = rawNewX;
+             newW = rawNewW;
         }
-        if (resizeStart.handle.includes('s')) newH = Math.max(50, resizeStart.origH + dy);
+        if (resizeStart.handle.includes('s')) newH = resizeStart.origH + dy;
         if (resizeStart.handle.includes('n')) {
-            const possibleH = resizeStart.origH - dy;
-            if (possibleH > 50) { newH = possibleH; newY = resizeStart.origY + dy; }
+             // For top handles, we change Y and Height
+             const rawNewY = resizeStart.origY + dy;
+             const rawNewH = resizeStart.origH - dy;
+             newY = rawNewY;
+             newH = rawNewH;
         }
 
-        if (!isShift) {
-            if (resizeStart.handle === 'se') newH = newW / aspectRatio;
-            else if (resizeStart.handle === 'sw') newH = newW / aspectRatio;
-            else if (resizeStart.handle === 'ne') newW = newH * aspectRatio;
-            else if (resizeStart.handle === 'nw') {
-                 newH = newW / aspectRatio;
-                 newY = resizeStart.origY + (resizeStart.origH - newH);
+        // Apply Grid Snap to Dimensions AND Position if Snap Enabled
+        // This ensures the box stays on the grid
+        if (snapEnabled) {
+            // Snap Width/Height
+            const snappedW = Math.max(gridSize, snapToGrid(newW, gridSize));
+            const snappedH = Math.max(gridSize, snapToGrid(newH, gridSize));
+
+            // If we are moving X (West handles), we need to ensure the right edge stays fixed relative to the start
+            // Or simpler: Snap the new X, then recalculate W based on the difference from Right Edge
+            if (resizeStart.handle.includes('w')) {
+                const rightEdge = resizeStart.origX + resizeStart.origW;
+                const snappedX = snapToGrid(newX, gridSize);
+                // Ensure we don't flip
+                if (snappedX < rightEdge - gridSize) {
+                    newX = snappedX;
+                    newW = rightEdge - snappedX;
+                } else {
+                    // Hit minimum width limit from the left
+                    newX = rightEdge - gridSize;
+                    newW = gridSize;
+                }
+            } else {
+                 newW = snappedW;
+            }
+
+            // If we are moving Y (North handles)
+            if (resizeStart.handle.includes('n')) {
+                const bottomEdge = resizeStart.origY + resizeStart.origH;
+                const snappedY = snapToGrid(newY, gridSize);
+                if (snappedY < bottomEdge - gridSize) {
+                    newY = snappedY;
+                    newH = bottomEdge - snappedY;
+                } else {
+                    newY = bottomEdge - gridSize;
+                    newH = gridSize;
+                }
+            } else {
+                newH = snappedH;
             }
         }
 
-        if (snapEnabled) {
-            // Optional: Snap dimensions or position during resize
-            // Snapping position is safer visually
-            newX = snapToGrid(newX, 40);
-            newY = snapToGrid(newY, 40);
+        // Maintain Aspect Ratio (Shift Key) - overrides free resize
+        // Note: Snapping + Aspect Ratio is mathematically tricky to satisfy perfectly.
+        // We prioritize snapping if enabled, effectively disabling aspect ratio lock if it breaks grid.
+        if (!isShift && !snapEnabled) {
+             // Simple aspect ratio logic for non-snapped resize
+             if (resizeStart.handle === 'se') newH = newW / aspectRatio;
+             else if (resizeStart.handle === 'sw') newH = newW / aspectRatio;
+             else if (resizeStart.handle === 'ne') newW = newH * aspectRatio;
+             else if (resizeStart.handle === 'nw') {
+                  newH = newW / aspectRatio;
+                  newY = resizeStart.origY + (resizeStart.origH - newH);
+             }
         }
 
-        setLocalState({ x: newX, y: newY, width: newW, height: newH });
+        // Minimum Size Enforcements
+        newW = Math.max(snapEnabled ? gridSize : 50, newW);
+        newH = Math.max(snapEnabled ? gridSize : 50, newH);
+
+        // COLLISION CHECK
+        const candidate = {
+            x: newX,
+            y: newY,
+            width: newW,
+            height: newH
+        };
+
+        if (!isColliding(candidate, items, item.id)) {
+            setLocalState({ x: newX, y: newY, width: newW, height: newH });
+        }
       }
     };
 
@@ -228,7 +302,7 @@ export const CanvasItem: React.FC<CanvasItemProps> = memo(({
       window.removeEventListener('mousemove', handleGlobalMove);
       window.removeEventListener('mouseup', handleUp);
     };
-  }, [isDragging, isResizing, dragStart, resizeStart, onUpdate, item.id, snapEnabled, localState]); 
+  }, [isDragging, isResizing, dragStart, resizeStart, onUpdate, item.id, snapEnabled, localState, items]); 
 
   const handleNameKeyDown = (e: React.KeyboardEvent) => {
       if (e.key === 'Enter') {

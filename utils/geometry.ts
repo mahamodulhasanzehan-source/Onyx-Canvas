@@ -1,4 +1,5 @@
-import { Point, Size } from '../types';
+
+import { Point, Size, CanvasItem } from '../types';
 
 export const snapToGrid = (value: number, gridSize: number): number => {
   return Math.round(value / gridSize) * gridSize;
@@ -12,12 +13,26 @@ export const rectIntersects = (
   r1: { x: number; y: number; width: number; height: number },
   r2: { x: number; y: number; width: number; height: number }
 ): boolean => {
+  // Add a tiny buffer (epsilon) to prevent floating point errors from triggering collisions 
+  // when items are perfectly adjacent
+  const buffer = 0.5;
   return !(
-    r2.x > r1.x + r1.width ||
-    r2.x + r2.width < r1.x ||
-    r2.y > r1.y + r1.height ||
-    r2.y + r2.height < r1.y
+    r2.x >= r1.x + r1.width - buffer ||
+    r2.x + r2.width <= r1.x + buffer ||
+    r2.y >= r1.y + r1.height - buffer ||
+    r2.y + r2.height <= r1.y + buffer
   );
+};
+
+export const isColliding = (
+  candidate: { x: number; y: number; width: number; height: number },
+  others: CanvasItem[],
+  ignoreId: string
+): boolean => {
+  return others.some((other) => {
+    if (other.id === ignoreId) return false;
+    return rectIntersects(candidate, other);
+  });
 };
 
 export const getScaledDimensions = (

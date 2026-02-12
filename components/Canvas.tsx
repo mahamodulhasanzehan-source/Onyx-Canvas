@@ -270,6 +270,7 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
                 <CanvasItem
                   key={item.id}
                   item={item}
+                  items={items}
                   isSelected={item.id === selectedId}
                   scale={scaleState}
                   snapEnabled={snapEnabled}
