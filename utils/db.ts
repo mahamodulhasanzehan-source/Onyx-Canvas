@@ -19,6 +19,7 @@ import {
 import { CanvasItem } from '../types';
 
 const COLLECTION_NAME = 'canvas_items';
+let forcedLocalMode = false;
 
 // --- Local IndexedDB Setup (Fallback) ---
 const LOCAL_DB_NAME = 'onyx_canvas_local';
@@ -84,120 +85,195 @@ const getLocalImageBlob = async (id: string): Promise<Blob | null> => {
     });
 };
 
+// --- Fallback Handlers ---
+
+const switchToLocalMode = () => {
+    if (!forcedLocalMode) {
+        console.warn("Switching to Local Mode due to Firebase connection issues.");
+        forcedLocalMode = true;
+        // Trigger a refresh of the subscription to switch data sources
+        // We can't easily force the React component to re-subscribe from here 
+        // without a global event, but new calls will use local.
+        // For the subscription, we handle it inside the subscribe function.
+    }
+};
+
 // --- Exported Functions ---
 
 /**
- * Subscribes to canvas items. Uses Firestore if initialized, else IndexedDB.
+ * Subscribes to canvas items. 
+ * Tries Firestore first. If it fails (permission/network), falls back to Local DB.
  */
 export const subscribeToCanvasItems = (callback: (items: CanvasItem[]) => void) => {
-  if (isFirebaseInitialized && db) {
-      const q = query(collection(db, COLLECTION_NAME), orderBy('zIndex', 'asc'));
-      return onSnapshot(q, (snapshot) => {
-        const items = snapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data()
-        })) as CanvasItem[];
-        callback(items);
-      }, (error) => {
-        console.error("Firestore subscription error:", error);
-      });
-  } else {
-      // Local Mode
+  // If we already decided to be local, or firebase is missing
+  if (forcedLocalMode || !isFirebaseInitialized || !db) {
       listeners.push(callback);
-      notifyListeners(); // Initial load
+      notifyListeners();
       return () => {
           const index = listeners.indexOf(callback);
           if (index > -1) listeners.splice(index, 1);
       };
   }
+
+  // Try Cloud
+  try {
+      const q = query(collection(db, COLLECTION_NAME), orderBy('zIndex', 'asc'));
+      const unsubscribe = onSnapshot(q, 
+        (snapshot) => {
+            const items = snapshot.docs.map(doc => ({
+              id: doc.id,
+              ...doc.data()
+            })) as CanvasItem[];
+            callback(items);
+        }, 
+        (error) => {
+            console.error("Firestore subscription failed:", error);
+            // If permission denied or other fatal error, switch to local
+            switchToLocalMode();
+            // Start local subscription immediately
+            listeners.push(callback);
+            notifyListeners();
+        }
+      );
+      
+      return () => {
+          unsubscribe();
+          const index = listeners.indexOf(callback);
+          if (index > -1) listeners.splice(index, 1);
+      };
+
+  } catch (e) {
+      console.error("Setup subscription error:", e);
+      switchToLocalMode();
+      listeners.push(callback);
+      notifyListeners();
+      return () => {};
+  }
 };
 
 /**
- * Uploads an image. Uses Firebase Storage if initialized, else IndexedDB.
+ * Uploads an image. 
+ * Tries Firebase Storage. If it fails, falls back to IndexedDB.
  */
 export const uploadImageBlob = async (blob: Blob, fileName: string): Promise<{ url: string, storagePath: string }> => {
-  if (isFirebaseInitialized && storage) {
-      const uniqueId = crypto.randomUUID();
-      const storagePath = `images/${uniqueId}_${fileName}`;
-      const storageRef = ref(storage, storagePath);
-      await uploadBytes(storageRef, blob);
-      const url = await getDownloadURL(storageRef);
-      return { url, storagePath };
-  } else {
-      // Local Mode
-      const uniqueId = `local-${crypto.randomUUID()}`;
-      const database = await getLocalDB();
-      const tx = database.transaction('images', 'readwrite');
-      const store = tx.objectStore('images');
-      store.put({ id: uniqueId, blob });
-      
-      const url = URL.createObjectURL(blob);
-      return { url, storagePath: uniqueId };
+  if (!forcedLocalMode && isFirebaseInitialized && storage) {
+      try {
+          const uniqueId = crypto.randomUUID();
+          const storagePath = `images/${uniqueId}_${fileName}`;
+          const storageRef = ref(storage, storagePath);
+          
+          // Add a timeout promise to detect hangs
+          const uploadPromise = uploadBytes(storageRef, blob);
+          const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Upload timeout")), 15000));
+          
+          await Promise.race([uploadPromise, timeoutPromise]);
+          
+          const url = await getDownloadURL(storageRef);
+          return { url, storagePath };
+      } catch (e) {
+          console.error("Firebase Storage upload failed, using local fallback:", e);
+          switchToLocalMode();
+          // Fall through to local logic below
+      }
   }
+
+  // Local Mode
+  const uniqueId = `local-${crypto.randomUUID()}`;
+  const database = await getLocalDB();
+  const tx = database.transaction('images', 'readwrite');
+  const store = tx.objectStore('images');
+  store.put({ id: uniqueId, blob });
+  
+  const url = URL.createObjectURL(blob);
+  return { url, storagePath: uniqueId };
 };
 
 /**
  * Adds a new item.
  */
 export const addCanvasItem = async (item: Omit<CanvasItem, 'id'>) => {
-  if (isFirebaseInitialized && db) {
-      await addDoc(collection(db, COLLECTION_NAME), {
-        ...item,
-        createdAt: serverTimestamp()
-      });
-  } else {
-      const database = await getLocalDB();
-      const tx = database.transaction('items', 'readwrite');
-      const store = tx.objectStore('items');
-      const newItem = { ...item, id: crypto.randomUUID(), createdAt: Date.now() };
-      store.add(newItem);
-      notifyListeners();
+  if (!forcedLocalMode && isFirebaseInitialized && db) {
+      try {
+          await addDoc(collection(db, COLLECTION_NAME), {
+            ...item,
+            createdAt: serverTimestamp()
+          });
+          return;
+      } catch (e) {
+          console.error("Firestore write failed, using local fallback:", e);
+          switchToLocalMode();
+          // Fall through to local logic below
+      }
   }
+
+  const database = await getLocalDB();
+  const tx = database.transaction('items', 'readwrite');
+  const store = tx.objectStore('items');
+  const newItem = { ...item, id: crypto.randomUUID(), createdAt: Date.now() };
+  store.add(newItem);
+  notifyListeners();
 };
 
 /**
  * Updates an existing item.
  */
 export const updateCanvasItem = async (id: string, updates: Partial<CanvasItem>) => {
-  if (isFirebaseInitialized && db) {
-      const docRef = doc(db, COLLECTION_NAME, id);
-      await updateDoc(docRef, updates);
-  } else {
-      const database = await getLocalDB();
-      const tx = database.transaction('items', 'readwrite');
-      const store = tx.objectStore('items');
-      const request = store.get(id);
-      request.onsuccess = () => {
-          const data = request.result;
-          if (data) {
-              store.put({ ...data, ...updates });
-              notifyListeners();
-          }
-      };
+  if (!forcedLocalMode && isFirebaseInitialized && db) {
+      try {
+          const docRef = doc(db, COLLECTION_NAME, id);
+          await updateDoc(docRef, updates);
+          return;
+      } catch (e) {
+           console.error("Firestore update failed:", e);
+           // If the doc doesn't exist in cloud (maybe it was created locally), this will fail.
+           // We should try local update too just in case.
+           switchToLocalMode();
+      }
   }
+
+  const database = await getLocalDB();
+  const tx = database.transaction('items', 'readwrite');
+  const store = tx.objectStore('items');
+  const request = store.get(id);
+  request.onsuccess = () => {
+      const data = request.result;
+      if (data) {
+          store.put({ ...data, ...updates });
+          notifyListeners();
+      }
+  };
 };
 
 /**
  * Deletes an item and its associated image.
  */
 export const deleteCanvasItem = async (id: string, storagePath?: string) => {
-  if (isFirebaseInitialized && db && storage) {
-      await deleteDoc(doc(db, COLLECTION_NAME, id));
-      if (storagePath && !storagePath.startsWith('local-')) {
-        const storageRef = ref(storage, storagePath);
-        try { await deleteObject(storageRef); } catch (e) { console.warn("Failed to delete image file:", e); }
+  if (!forcedLocalMode && isFirebaseInitialized && db) {
+      try {
+          await deleteDoc(doc(db, COLLECTION_NAME, id));
+          if (storagePath && !storagePath.startsWith('local-')) {
+            if (storage) {
+                const storageRef = ref(storage, storagePath);
+                // Don't await this, let it happen in bg
+                deleteObject(storageRef).catch(e => console.warn("Failed to delete cloud image:", e));
+            }
+          }
+          return;
+      } catch (e) {
+          console.warn("Firestore delete failed:", e);
+          switchToLocalMode();
       }
-  } else {
-      const database = await getLocalDB();
-      // Delete Item
-      const txItems = database.transaction('items', 'readwrite');
-      txItems.objectStore('items').delete(id);
-      
-      // Delete Image if local
-      if (storagePath && storagePath.startsWith('local-')) {
-          const txImages = database.transaction('images', 'readwrite');
-          txImages.objectStore('images').delete(storagePath);
-      }
-      notifyListeners();
   }
+
+  const database = await getLocalDB();
+  // Delete Item
+  const txItems = database.transaction('items', 'readwrite');
+  txItems.objectStore('items').delete(id);
+  
+  // Delete Image if local
+  if (storagePath && storagePath.startsWith('local-')) {
+      const txImages = database.transaction('images', 'readwrite');
+      txImages.objectStore('images').delete(storagePath);
+  }
+  notifyListeners();
 };

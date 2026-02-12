@@ -1,9 +1,9 @@
 import { initializeApp } from "firebase/app";
-import { getFirestore } from "firebase/firestore";
+import { getFirestore, enableIndexedDbPersistence } from "firebase/firestore";
 import { getStorage } from "firebase/storage";
-import { getAuth } from "firebase/auth";
+import { getAuth, signInAnonymously } from "firebase/auth";
 
-// Direct configuration as requested
+// Direct configuration
 const firebaseConfig = {
   apiKey: "AIzaSyBkzJzSzSXvbOaSYs7csHLSp-8EgfEY1QQ",
   authDomain: "tacotyper.firebaseapp.com",
@@ -15,6 +15,7 @@ const firebaseConfig = {
 };
 
 export let isFirebaseInitialized = false;
+export let isOffline = false;
 
 let app;
 let db: any = null;
@@ -26,10 +27,22 @@ try {
   db = getFirestore(app);
   storage = getStorage(app);
   auth = getAuth(app);
+  
   isFirebaseInitialized = true;
   console.log("Firebase initialized successfully.");
+  
+  // Auto sign-in
+  signInAnonymously(auth).then(() => {
+    console.log("Signed in anonymously");
+  }).catch((error) => {
+    console.warn("Anonymous auth failed:", error);
+    // If auth fails, we might still be able to read public data, 
+    // but usually we should treat this as a signal to maybe use local mode if writes fail.
+  });
+
 } catch (e) {
   console.warn("Firebase initialization failed, falling back to local mode:", e);
+  isFirebaseInitialized = false;
 }
 
 export { db, storage, auth };
