@@ -1,12 +1,13 @@
 import React from 'react';
-import { Search, AlignJustify } from 'lucide-react';
+import { Search, AlignJustify, HelpCircle } from 'lucide-react';
 
 interface NavigationControlsProps {
   onFindClosest: () => void;
   onToggleSidebar: () => void;
+  onShowHelp: () => void;
 }
 
-export const NavigationControls: React.FC<NavigationControlsProps> = ({ onFindClosest, onToggleSidebar }) => {
+export const NavigationControls: React.FC<NavigationControlsProps> = ({ onFindClosest, onToggleSidebar, onShowHelp }) => {
   return (
     <div className="fixed top-4 left-4 z-50 flex flex-col gap-2">
       <button 
@@ -22,6 +23,14 @@ export const NavigationControls: React.FC<NavigationControlsProps> = ({ onFindCl
         title="Image List"
       >
         <AlignJustify size={20} />
+      </button>
+      <div className="w-full h-px bg-zinc-800 my-1" />
+      <button 
+        onClick={onShowHelp}
+        className="p-3 bg-zinc-900/90 backdrop-blur-md border border-zinc-800 rounded-xl text-blue-400 hover:text-blue-300 hover:bg-zinc-800 shadow-xl transition-all active:scale-95"
+        title="Help & Instructions"
+      >
+        <HelpCircle size={20} />
       </button>
     </div>
   );

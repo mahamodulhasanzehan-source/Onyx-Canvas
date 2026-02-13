@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { CanvasItem, Point, ResizeHandle } from '../types';
 import { snapToGrid, isColliding } from '../utils/geometry';
 
@@ -192,7 +192,7 @@ export const useItemInteraction = ({
       }
     };
 
-    const handleUp = () => {
+    const handleUp = (e: Event) => {
       if (isDragging) {
         // Was dragging a selected item
         if (hasMovedRef.current && localState) {
@@ -207,6 +207,13 @@ export const useItemInteraction = ({
         if (!hasMovedRef.current) {
           // Didn't move -> Select it
           onSelect(item.id);
+          
+          // CRITICAL FIX: Prevent ghost clicks on mobile
+          // If this was a tap on touch device, prevent default to stop mouse emulation
+          // which would otherwise bubble to Canvas and cause immediate deselection.
+          if (e.type === 'touchend' && e.cancelable) {
+            e.preventDefault();
+          }
         }
         // If moved, it was a pan, do nothing (Canvas handled it)
       } else if (isResizing && localState) {
@@ -227,7 +234,9 @@ export const useItemInteraction = ({
       window.addEventListener('mouseup', handleUp);
       // Also listen for touch events on window to handle the "global move" equivalence for touch
       window.addEventListener('touchmove', handleGlobalMove as any, { passive: false });
-      window.addEventListener('touchend', handleUp);
+      
+      // FIX: Add passive: false to allow e.preventDefault() in handleUp
+      window.addEventListener('touchend', handleUp, { passive: false });
     }
     return () => {
       window.removeEventListener('mousemove', handleGlobalMove);

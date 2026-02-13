@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback, RefObject, MutableRefObject } from 'react';
+import React, { useState, useRef, useEffect, useCallback, RefObject, MutableRefObject } from 'react';
 import { Viewport } from '../types';
 
 interface GestureConfig {
@@ -46,6 +46,36 @@ export const useCanvasGestures = ({
       gridEl.style.opacity = "1";
     }
   }, [itemsContainerRef, viewportRef]);
+
+  // Animated flyTo
+  const flyTo = useCallback((targetX: number, targetY: number, targetScale: number, duration: number = 500) => {
+    const startX = viewportRef.current.x;
+    const startY = viewportRef.current.y;
+    const startScale = viewportRef.current.scale;
+    const startTime = performance.now();
+
+    const animate = (currentTime: number) => {
+      const elapsed = currentTime - startTime;
+      const progress = Math.min(elapsed / duration, 1);
+      // easeOutQuart
+      const ease = 1 - Math.pow(1 - progress, 4);
+
+      const currentX = startX + (targetX - startX) * ease;
+      const currentY = startY + (targetY - startY) * ease;
+      const currentScale = startScale + (targetScale - startScale) * ease;
+
+      viewportRef.current = { x: currentX, y: currentY, scale: currentScale };
+      setScaleState(currentScale);
+      updateVisuals();
+
+      if (progress < 1) {
+        animationFrameRef.current = requestAnimationFrame(animate);
+      }
+    };
+    
+    cancelAnimationFrame(animationFrameRef.current);
+    animationFrameRef.current = requestAnimationFrame(animate);
+  }, [updateVisuals, viewportRef]);
 
   // Wheel Zoom
   useEffect(() => {
@@ -208,7 +238,8 @@ export const useCanvasGestures = ({
   // Drag Drop
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
-    const files = Array.from(e.dataTransfer.files);
+    if (!e.dataTransfer) return;
+    const files = Array.from(e.dataTransfer.files) as File[];
     const rect = containerRef.current?.getBoundingClientRect();
     if (rect) {
       const { x, y, scale } = viewportRef.current;
@@ -229,6 +260,7 @@ export const useCanvasGestures = ({
     handleTouchMove,
     handleTouchEnd,
     handleDrop,
-    handleDragOver
+    handleDragOver,
+    flyTo
   };
 };

@@ -53,7 +53,8 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
     handleTouchMove,
     handleTouchEnd,
     handleDrop,
-    handleDragOver
+    handleDragOver,
+    flyTo
   } = useCanvasGestures({
     containerRef,
     itemsContainerRef,
@@ -64,11 +65,7 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
   });
 
   useImperativeHandle(ref, () => ({
-    flyTo: (x, y, scale) => {
-      viewportRef.current = { x, y, scale };
-      setScaleState(scale);
-      updateVisuals();
-    },
+    flyTo: (x, y, scale) => flyTo(x, y, scale),
     getViewport: () => viewportRef.current
   }));
 

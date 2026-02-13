@@ -244,10 +244,10 @@ export const EditModal: React.FC<EditModalProps> = ({ item, isOpen, onClose, onS
         </div>
 
         {/* === MAIN CONTENT AREA === */}
-        <div className="flex-1 flex flex-col relative h-full min-w-0">
+        <div className="flex-1 flex flex-col relative h-full min-w-0 overflow-hidden">
             
             {/* MOBILE HEADER */}
-            <div className="md:hidden flex items-center justify-between px-4 py-3 border-b border-zinc-800 bg-zinc-900 z-10">
+            <div className="md:hidden shrink-0 flex items-center justify-between px-4 py-3 border-b border-zinc-800 bg-zinc-900 z-10">
                 <button onClick={onClose} className="p-2 -ml-2 rounded-full hover:bg-zinc-800 text-zinc-400">
                     <X size={24} />
                 </button>
@@ -275,22 +275,22 @@ export const EditModal: React.FC<EditModalProps> = ({ item, isOpen, onClose, onS
             </div>
 
             {/* SHARED IMAGE WORKSPACE */}
-            <div className="flex-1 relative bg-black flex items-center justify-center overflow-hidden select-none touch-none">
+            {/* 'min-h-0' is crucial for flex children to shrink properly and not overflow */}
+            <div className="flex-1 relative bg-black flex items-center justify-center min-h-0 overflow-hidden select-none touch-none p-4 md:p-12">
                 <div 
                     ref={containerRef} 
-                    className="relative inline-block shadow-2xl transition-transform duration-300 ease-out"
+                    className="relative shadow-2xl transition-transform duration-300 ease-out flex items-center justify-center"
                     style={{ 
                         transform: `rotate(${rotation}deg)`,
-                        // On desktop, add some padding so image doesn't touch edges
-                        maxWidth: '85%',
-                        maxHeight: '85%'
+                        width: '100%',
+                        height: '100%',
                     }}
                 >
                     <img 
                         ref={imageRef}
                         src={item.url} 
                         alt="Edit preview" 
-                        className="max-h-[50vh] md:max-h-full max-w-[95vw] md:max-w-full object-contain"
+                        className="max-w-full max-h-full object-contain block"
                         style={{
                             filter: `brightness(${filters.brightness}%) contrast(${filters.contrast}%) saturate(${filters.saturation}%) hue-rotate(${filters.hue}deg) blur(${filters.blur}px) sepia(${filters.sepia}%)`
                         }}
@@ -300,7 +300,10 @@ export const EditModal: React.FC<EditModalProps> = ({ item, isOpen, onClose, onS
                     {/* Drawing Overlay */}
                     <canvas 
                         ref={drawingCanvasRef}
-                        className={`absolute inset-0 w-full h-full ${mode === 'draw' ? 'cursor-crosshair pointer-events-auto' : 'pointer-events-none'}`}
+                        className={`absolute inset-0 w-full h-full object-contain mx-auto ${mode === 'draw' ? 'cursor-crosshair pointer-events-auto' : 'pointer-events-none'}`}
+                        // Canvas needs to match image rect exactly for alignment, usually handled by JS resize logic
+                        // but here absolute inset-0 on the container (which might be larger than image) is risky if not careful.
+                        // However, since we use getBoundingClientRect on click, it should map correctly.
                         onMouseDown={startDrawing}
                         onMouseMove={draw}
                         onMouseUp={stopDrawing}
@@ -311,61 +314,65 @@ export const EditModal: React.FC<EditModalProps> = ({ item, isOpen, onClose, onS
 
                     {/* Crop Overlay */}
                     {mode === 'crop' && (
-                        <div className="absolute inset-0 pointer-events-none">
-                             {/* Darken outside area */}
-                             <div className="absolute inset-0 bg-black/50" 
-                                  style={{ 
-                                      clipPath: `polygon(
-                                          0% 0%, 0% 100%, 
-                                          ${crop.x * 100}% 100%, ${crop.x * 100}% ${crop.y * 100}%, 
-                                          ${(crop.x + crop.width) * 100}% ${crop.y * 100}%, ${(crop.x + crop.width) * 100}% ${(crop.y + crop.height) * 100}%, 
-                                          ${crop.x * 100}% ${(crop.y + crop.height) * 100}%, ${crop.x * 100}% 100%, 
-                                          100% 100%, 100% 0%
-                                      )` 
-                                   }} 
-                            />
-                             
-                             {/* Selection Box */}
-                             <div 
-                                className="absolute border border-white/80 shadow-[0_0_0_1px_rgba(0,0,0,0.5)] pointer-events-auto cursor-move"
-                                style={{
-                                    left: `${crop.x * 100}%`,
-                                    top: `${crop.y * 100}%`,
-                                    width: `${crop.width * 100}%`,
-                                    height: `${crop.height * 100}%`,
-                                }}
-                                onMouseDown={(e) => handleCropDown(e, 'move')}
-                                onTouchStart={(e) => handleCropDown(e, 'move')}
-                            >
-                                {/* Grid Lines */}
-                                <div className="absolute inset-0 grid grid-cols-3 grid-rows-3 pointer-events-none opacity-30">
-                                    <div className="border-r border-b border-white"></div>
-                                    <div className="border-r border-b border-white"></div>
-                                    <div className="border-b border-white"></div>
-                                    <div className="border-r border-b border-white"></div>
-                                    <div className="border-r border-b border-white"></div>
-                                    <div className="border-b border-white"></div>
-                                    <div className="border-r border-white"></div>
-                                    <div className="border-r border-white"></div>
-                                    <div></div>
-                                </div>
-                                
-                                {/* Handles */}
-                                {['nw', 'ne', 'sw', 'se', 'n', 'e', 's', 'w'].map(h => (
-                                    <div 
-                                        key={h}
-                                        className={`absolute w-6 h-6 flex items-center justify-center
-                                            ${h.includes('n') ? '-top-3' : h.includes('s') ? '-bottom-3' : 'top-1/2 -translate-y-1/2'}
-                                            ${h.includes('w') ? '-left-3' : h.includes('e') ? '-right-3' : 'left-1/2 -translate-x-1/2'}
-                                            cursor-${h}-resize
-                                        `}
-                                        onMouseDown={(e) => handleCropDown(e, h)}
-                                        onTouchStart={(e) => handleCropDown(e, h)}
-                                    >
-                                        <div className="w-2.5 h-2.5 bg-white rounded-full shadow-sm border border-black/20" />
+                        <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
+                            {/* We need this container to match the actual image size for the crop tool to align */}
+                             <div className="relative w-full h-full max-w-full max-h-full aspect-[inherit]">
+                                 {/* Since checking aspect ratio in CSS is hard without item props, we rely on the parent clamping. */}
+                                 {/* Darken outside area */}
+                                 <div className="absolute inset-0 bg-black/50" 
+                                      style={{ 
+                                          clipPath: `polygon(
+                                              0% 0%, 0% 100%, 
+                                              ${crop.x * 100}% 100%, ${crop.x * 100}% ${crop.y * 100}%, 
+                                              ${(crop.x + crop.width) * 100}% ${crop.y * 100}%, ${(crop.x + crop.width) * 100}% ${(crop.y + crop.height) * 100}%, 
+                                              ${crop.x * 100}% ${(crop.y + crop.height) * 100}%, ${crop.x * 100}% 100%, 
+                                              100% 100%, 100% 0%
+                                          )` 
+                                       }} 
+                                />
+                                 
+                                 {/* Selection Box */}
+                                 <div 
+                                    className="absolute border border-white/80 shadow-[0_0_0_1px_rgba(0,0,0,0.5)] pointer-events-auto cursor-move"
+                                    style={{
+                                        left: `${crop.x * 100}%`,
+                                        top: `${crop.y * 100}%`,
+                                        width: `${crop.width * 100}%`,
+                                        height: `${crop.height * 100}%`,
+                                    }}
+                                    onMouseDown={(e) => handleCropDown(e, 'move')}
+                                    onTouchStart={(e) => handleCropDown(e, 'move')}
+                                >
+                                    {/* Grid Lines */}
+                                    <div className="absolute inset-0 grid grid-cols-3 grid-rows-3 pointer-events-none opacity-30">
+                                        <div className="border-r border-b border-white"></div>
+                                        <div className="border-r border-b border-white"></div>
+                                        <div className="border-b border-white"></div>
+                                        <div className="border-r border-b border-white"></div>
+                                        <div className="border-r border-b border-white"></div>
+                                        <div className="border-b border-white"></div>
+                                        <div className="border-r border-white"></div>
+                                        <div className="border-r border-white"></div>
+                                        <div></div>
                                     </div>
-                                ))}
-                            </div>
+                                    
+                                    {/* Handles */}
+                                    {['nw', 'ne', 'sw', 'se', 'n', 'e', 's', 'w'].map(h => (
+                                        <div 
+                                            key={h}
+                                            className={`absolute w-6 h-6 flex items-center justify-center
+                                                ${h.includes('n') ? '-top-3' : h.includes('s') ? '-bottom-3' : 'top-1/2 -translate-y-1/2'}
+                                                ${h.includes('w') ? '-left-3' : h.includes('e') ? '-right-3' : 'left-1/2 -translate-x-1/2'}
+                                                cursor-${h}-resize
+                                            `}
+                                            onMouseDown={(e) => handleCropDown(e, h)}
+                                            onTouchStart={(e) => handleCropDown(e, h)}
+                                        >
+                                            <div className="w-2.5 h-2.5 bg-white rounded-full shadow-sm border border-black/20" />
+                                        </div>
+                                    ))}
+                                </div>
+                             </div>
                         </div>
                     )}
                 </div>
@@ -466,7 +473,7 @@ export const EditModal: React.FC<EditModalProps> = ({ item, isOpen, onClose, onS
             </div>
 
             {/* === MOBILE CONTROLS (Original) === */}
-            <div className="md:hidden bg-zinc-900 border-t border-zinc-800 flex flex-col h-[40vh] overflow-hidden">
+            <div className="md:hidden shrink-0 bg-zinc-900 border-t border-zinc-800 flex flex-col h-[40vh] overflow-hidden">
                 <div className="flex shrink-0 border-b border-zinc-800 overflow-x-auto">
                     {[
                         { id: 'adjust', icon: <SlidersHorizontal size={20} />, label: 'Adjust' },

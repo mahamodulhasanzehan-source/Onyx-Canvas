@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Canvas, CanvasHandle } from './components/Canvas';
 import { Toolbar } from './components/Toolbar';
 import { EditModal } from './components/EditModal';
+import { HelpModal } from './components/HelpModal';
 import { NavigationControls } from './components/NavigationControls';
 import { Sidebar } from './components/Sidebar';
 import { ContextMenu } from './components/ContextMenu';
@@ -21,6 +22,7 @@ const App: React.FC = () => {
   const [snapEnabled] = useState(true);
   const [itemToEdit, setItemToEdit] = useState<CanvasItem | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
   const [contextMenu, setContextMenu] = useState<ContextMenuState>({ isOpen: false, x: 0, y: 0, itemId: '' });
 
   const canvasRef = useRef<CanvasHandle>(null);
@@ -230,6 +232,7 @@ const App: React.FC = () => {
       <NavigationControls
         onFindClosest={handleFindClosest}
         onToggleSidebar={() => setSidebarOpen(!sidebarOpen)}
+        onShowHelp={() => setHelpOpen(true)}
       />
 
       <Sidebar
@@ -238,6 +241,10 @@ const App: React.FC = () => {
         items={items}
         onItemClick={handleSidebarItemClick}
       />
+
+      {helpOpen && (
+        <HelpModal onClose={() => setHelpOpen(false)} />
+      )}
 
       <Canvas
         ref={canvasRef}
