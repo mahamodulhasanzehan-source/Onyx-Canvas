@@ -23,6 +23,24 @@ export const useCanvasData = () => {
     }
   };
 
+  // Batch update
+  const updateItems = async (updates: { id: string, data: Partial<CanvasItem> }[]) => {
+      setItems(prev => {
+          const map = new Map(updates.map(u => [u.id, u.data]));
+          return prev.map(i => {
+              const u = map.get(i.id);
+              return u ? { ...i, ...u } : i;
+          });
+      });
+      
+      try {
+          // Fire and forget individually for now, or use batch write if DB supports
+          await Promise.all(updates.map(u => updateCanvasItem(u.id, u.data)));
+      } catch(e) {
+          console.error("Failed batch update", e);
+      }
+  };
+
   const deleteItem = async (id: string) => {
     setItems(prev => prev.filter(i => i.id !== id));
     try {
@@ -37,6 +55,7 @@ export const useCanvasData = () => {
     setItems,
     isInitializing,
     updateItem,
+    updateItems,
     deleteItem
   };
 };

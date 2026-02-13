@@ -7,10 +7,10 @@ import { useCanvasGestures } from '../hooks/useCanvasGestures';
 interface CanvasProps {
   items: ICanvasItem[];
   loadingItems: LoadingCanvasItem[];
-  selectedId: string | null;
+  selectedIds: string[]; // Changed from selectedId
   renamingId: string | null;
   snapEnabled: boolean;
-  onSelectionChange: (id: string | null) => void;
+  onSelectionChange: (ids: string[]) => void;
   onItemsChange: (items: ICanvasItem[]) => void;
   onItemUpdate: (id: string, updates: Partial<ICanvasItem>) => void;
   onDropFiles: (files: File[], x: number, y: number) => void;
@@ -18,6 +18,7 @@ interface CanvasProps {
   onContextMenu: (e: React.MouseEvent, id: string) => void;
   onCanvasContextMenu: (e: React.MouseEvent | { clientX: number, clientY: number }) => void;
   onRenameComplete: (id: string, newName: string) => void;
+  onGroupDrag?: (dx: number, dy: number) => void;
 }
 
 export interface CanvasHandle {
@@ -28,7 +29,7 @@ export interface CanvasHandle {
 export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
   items,
   loadingItems,
-  selectedId,
+  selectedIds,
   renamingId,
   snapEnabled,
   onSelectionChange,
@@ -38,7 +39,8 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
   onEditItem,
   onContextMenu,
   onCanvasContextMenu,
-  onRenameComplete
+  onRenameComplete,
+  onGroupDrag
 }, ref) => {
   const viewportRef = useRef<Viewport>({ x: 0, y: 0, scale: 1 });
   const containerRef = useRef<HTMLDivElement>(null);
@@ -47,6 +49,7 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
   const {
     scaleState,
     setScaleState,
+    selectionBox,
     updateVisuals,
     handleMouseDown,
     handleTouchStart,
@@ -59,6 +62,7 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
     containerRef,
     itemsContainerRef,
     viewportRef,
+    items, // Pass items for collision calc
     onSelectionChange,
     onCanvasContextMenu,
     onDropFiles
@@ -70,11 +74,9 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
   }));
 
   const handleUpdateItem = useCallback((id: string, updates: Partial<ICanvasItem>) => {
-    // Optimistic update bubbling up
     onItemUpdate(id, updates);
   }, [onItemUpdate]);
 
-  // Initial grid calculation for first render
   const gridSize = 40 * scaleState;
   const gridOffset = gridSize / 2;
 
@@ -97,10 +99,8 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
       {/* Grid Layer */}
       <div id="grid-bg-layer" className="absolute inset-0 pointer-events-none z-0 will-change-[background-position,opacity]"
         style={{
-          // 3px radius = 6px wide dots. Fully opaque (no transparency).
           backgroundImage: 'radial-gradient(circle, #27272a 3px, transparent 3px)',
           backgroundSize: `${gridSize}px ${gridSize}px`,
-          // Offset by half grid size to align dots with (0,0) coordinate
           backgroundPosition: `${-gridOffset}px ${-gridOffset}px`,
           opacity: 1
         }}
@@ -118,7 +118,8 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
               key={item.id}
               item={item}
               items={items}
-              isSelected={item.id === selectedId}
+              isSelected={selectedIds.includes(item.id)}
+              selectedIds={selectedIds}
               scale={scaleState}
               snapEnabled={snapEnabled}
               onSelect={onSelectionChange}
@@ -128,6 +129,7 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
               viewportOffset={{ x: 0, y: 0 }}
               isRenaming={renamingId === item.id}
               onRenameComplete={(name) => onRenameComplete(item.id, name)}
+              onGroupDrag={onGroupDrag}
             />
           ))}
 
@@ -154,12 +156,26 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
         </div>
       </div>
 
+      {/* Selection Box Overlay */}
+      {selectionBox && (
+          <div 
+             className="absolute border border-blue-500 bg-blue-500/10 pointer-events-none z-50"
+             style={{
+                 left: Math.min(selectionBox.startX, selectionBox.curX),
+                 top: Math.min(selectionBox.startY, selectionBox.curY),
+                 width: Math.abs(selectionBox.curX - selectionBox.startX),
+                 height: Math.abs(selectionBox.curY - selectionBox.startY)
+             }}
+          />
+      )}
+
       {items.length === 0 && loadingItems.length === 0 && (
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none select-none">
           <div className="text-zinc-700 text-center animate-in fade-in slide-in-from-bottom-5 duration-700">
             <p className="text-xl font-medium mb-2">Drag & Drop images here</p>
             <p className="text-sm opacity-60">Zoom with wheel. Pan to explore.</p>
             <p className="text-xs text-zinc-600 mt-2 md:hidden">Long press for options</p>
+            <p className="text-xs text-zinc-800 mt-4 font-mono">Ctrl+Drag to select multiple</p>
           </div>
         </div>
       )}

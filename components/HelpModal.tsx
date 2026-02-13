@@ -1,5 +1,5 @@
 import React from 'react';
-import { X, MousePointer2, Move, Edit3, Search, List, Type, PlusCircle, PenTool } from 'lucide-react';
+import { X, MousePointer2, Move, Edit3, Search, List, Type, PlusCircle, PenTool, Layers } from 'lucide-react';
 
 interface HelpModalProps {
   onClose: () => void;
@@ -43,34 +43,24 @@ export const HelpModal: React.FC<HelpModalProps> = ({ onClose }) => {
                     
                     <ul className="space-y-4">
                         <InstructionItem 
-                            icon={<PlusCircle size={18} />}
-                            title="Add Images"
-                            text="Drag and drop files directly onto the canvas, or right-click empty space and select 'New Image'."
+                            icon={<Layers size={18} />}
+                            title="Multi-Selection"
+                            text="Hold 'Ctrl' or 'Cmd' and drag on empty space to create a selection box. Or hold 'Ctrl' and click images to toggle them."
                         />
                         <InstructionItem 
                             icon={<Move size={18} />}
                             title="Move & Pan"
-                            text="Left-click and drag an image to move it. Click and drag empty space to pan around the canvas. Use mouse wheel to zoom."
+                            text="Drag an image to move. Drag a selected group to move all. Click empty space to pan."
                         />
-                        <InstructionItem 
+                         <InstructionItem 
+                            icon={<PlusCircle size={18} />}
+                            title="Add Images"
+                            text="Drag and drop files directly onto the canvas, or right-click empty space."
+                        />
+                         <InstructionItem 
                             icon={<Edit3 size={18} />}
-                            title="Edit Images"
-                            text="Double-click an image (or right-click > Edit) to open the editor. Adjust colors, crop, and draw."
-                        />
-                        <InstructionItem 
-                            icon={<Search size={18} />}
-                            title="Navigation"
-                            text="Click Search to find closest image. Right-click Search to jump to Origin (0,0)."
-                        />
-                        <InstructionItem 
-                            icon={<List size={18} />}
-                            title="Image List"
-                            text="Click the Menu icon to see a full list of images. Click a name to jump to it."
-                        />
-                        <InstructionItem 
-                            icon={<Type size={18} />}
-                            title="Rename"
-                            text="Right-click an image and select 'Rename' to change its label."
+                            title="Edit"
+                            text="Double-click an image to open the editor. Use the alignment bar when multiple images are selected."
                         />
                     </ul>
                 </div>
@@ -85,35 +75,25 @@ export const HelpModal: React.FC<HelpModalProps> = ({ onClose }) => {
                     </div>
 
                     <ul className="space-y-4">
-                         <InstructionItem 
-                            icon={<PlusCircle size={18} />}
-                            title="Add Images"
-                            text="Long-press on empty space and select 'New Image' to upload from your gallery."
+                        <InstructionItem 
+                            icon={<Layers size={18} />}
+                            title="Toggle-on-Tap"
+                            text="Tap images to select/deselect them. Tap background to clear selection. Select multiple to see alignment tools."
                         />
                         <InstructionItem 
                             icon={<Move size={18} />}
-                            title="Move & Pan"
-                            text="Tap an image to select it, then drag to move. Drag empty space to pan. Pinch with two fingers to zoom."
-                        />
-                        <InstructionItem 
-                            icon={<Edit3 size={18} />}
-                            title="Edit Images"
-                            text="Double-tap an image to open the editor. Access crop, filters, and drawing tools from the bottom sheet."
-                        />
-                        <InstructionItem 
-                            icon={<Search size={18} />}
                             title="Navigation"
-                            text="Tap Search to find nearest image. Long-press Search to jump to Origin (0,0)."
+                            text="Drag empty space to pan. Pinch to zoom. Long-press Search to jump to Origin (0,0)."
                         />
-                        <InstructionItem 
-                            icon={<List size={18} />}
-                            title="Image List"
-                            text="Tap the Menu icon (top-left) to open the sidebar list. Tap an item to fly to it."
+                         <InstructionItem 
+                            icon={<PlusCircle size={18} />}
+                            title="Add Images"
+                            text="Long-press empty space to add new images from your gallery."
                         />
                         <InstructionItem 
                             icon={<Type size={18} />}
                             title="Context Menu"
-                            text="Long-press an image to see options like Rename, Delete, or Download."
+                            text="Long-press an image for options like Rename, Delete, or Download."
                         />
                     </ul>
                 </div>

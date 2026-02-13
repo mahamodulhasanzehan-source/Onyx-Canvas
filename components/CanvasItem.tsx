@@ -7,21 +7,24 @@ export interface CanvasItemProps {
   item: ICanvasItem;
   items: ICanvasItem[]; 
   isSelected: boolean;
+  selectedIds: string[];
   scale: number;
   snapEnabled: boolean;
-  onSelect: (id: string | null) => void;
+  onSelect: (ids: string[]) => void;
   onUpdate: (id: string, updates: Partial<ICanvasItem>) => void;
   onContextMenu: (e: React.MouseEvent | { clientX: number, clientY: number }, id: string) => void;
   onEdit?: (item: ICanvasItem) => void;
   viewportOffset: Point;
   isRenaming?: boolean;
   onRenameComplete?: (newName: string) => void;
+  onGroupDrag?: (dx: number, dy: number) => void;
 }
 
 export const CanvasItem: React.FC<CanvasItemProps> = memo(({
   item,
   items,
   isSelected,
+  selectedIds,
   scale,
   snapEnabled,
   onSelect,
@@ -29,7 +32,8 @@ export const CanvasItem: React.FC<CanvasItemProps> = memo(({
   onContextMenu,
   onEdit,
   isRenaming,
-  onRenameComplete
+  onRenameComplete,
+  onGroupDrag
 }) => {
   const {
     localState,
@@ -45,13 +49,14 @@ export const CanvasItem: React.FC<CanvasItemProps> = memo(({
     onUpdate,
     onSelect,
     isRenaming,
-    isSelected
+    isSelected,
+    selectedIds,
+    onGroupDrag
   });
 
   const [nameInput, setNameInput] = useState(item.name);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Long Press Refs for Context Menu
   const touchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const touchStartPos = useRef<Point | null>(null);
 
@@ -68,23 +73,29 @@ export const CanvasItem: React.FC<CanvasItemProps> = memo(({
   };
 
   const handleTouchStart = (e: React.TouchEvent) => {
+    // Only handle single touch here.
+    if (e.touches.length > 1) return;
+    
+    // STOP propagation so Canvas doesn't pan
+    e.stopPropagation();
+
     const touch = e.touches[0];
     const mockEvent = {
         button: 0,
         clientX: touch.clientX,
         clientY: touch.clientY,
-        stopPropagation: () => e.stopPropagation(),
-        preventDefault: () => {} 
+        stopPropagation: () => {}, // Handled above
+        preventDefault: () => {},
+        type: 'touchstart' // Pass type for logic detection
     } as unknown as React.MouseEvent;
 
     handleMouseDown(mockEvent);
 
     touchStartPos.current = { x: touch.clientX, y: touch.clientY };
     touchTimer.current = setTimeout(() => {
-      if (isSelected) {
-          if (navigator.vibrate) navigator.vibrate(50);
-          onContextMenu({ clientX: touch.clientX, clientY: touch.clientY }, item.id);
-      }
+      // Long press -> Context Menu
+      if (navigator.vibrate) navigator.vibrate(50);
+      onContextMenu({ clientX: touch.clientX, clientY: touch.clientY }, item.id);
       touchStartPos.current = null;
     }, 500);
   };
@@ -101,9 +112,13 @@ export const CanvasItem: React.FC<CanvasItemProps> = memo(({
     }
   };
 
-  const handleTouchEnd = () => {
+  const handleTouchEnd = (e: React.TouchEvent) => {
     if (touchTimer.current) clearTimeout(touchTimer.current);
-    touchStartPos.current = null;
+    
+    // Tap Detection (if no move and no long press)
+    // Actually handleMouseDown handles drag end logic, but we need to ensure "Toggle-on-Tap" logic flows.
+    // useItemInteraction listens to window touchend, so we don't need explicit logic here for drag end.
+    // However, for SELECTION TOGGLE, useItemInteraction does it in handleUp.
   };
 
   const handleNameKeyDown = (e: React.KeyboardEvent) => {
@@ -116,7 +131,6 @@ export const CanvasItem: React.FC<CanvasItemProps> = memo(({
     onRenameComplete?.(nameInput);
   };
 
-  // Increased visual size for better touch/click targets
   const handleSize = 24 / scale;
   const handleOffset = -handleSize / 2;
 
@@ -127,9 +141,7 @@ export const CanvasItem: React.FC<CanvasItemProps> = memo(({
 
   const transitionClass = (isDragging || isResizing) ? 'duration-0' : 'duration-300';
 
-  // --- Non-destructive Crop Logic ---
   const crop = item.crop || { x: 0, y: 0, width: 1, height: 1 };
-  
   const innerWidthPercent = (1 / crop.width) * 100;
   const innerHeightPercent = (1 / crop.height) * 100;
   
