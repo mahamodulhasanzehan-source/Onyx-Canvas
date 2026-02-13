@@ -1,4 +1,3 @@
-
 import { Point, Size, CanvasItem } from '../types';
 
 export const snapToGrid = (value: number, gridSize: number): number => {
@@ -43,4 +42,74 @@ export const getScaledDimensions = (
   // STRICT REQUIREMENT: ZERO COMPRESSION / RESIZING
   // We ignore maxWidth and return original dimensions to render as-is.
   return { width: originalWidth, height: originalHeight };
+};
+
+/**
+ * Finds the nearest free position for an item given a list of obstacles.
+ * Uses a force-directed approach to push the item away from collisions.
+ */
+export const findFreePosition = (
+  item: { x: number; y: number; width: number; height: number },
+  others: CanvasItem[],
+  gridSize: number
+): Point => {
+  let { x, y } = item;
+  let attempts = 0;
+  const MAX_ATTEMPTS = 50;
+
+  while (attempts < MAX_ATTEMPTS) {
+    const collidingItems = others.filter(other => 
+      rectIntersects({ x, y, width: item.width, height: item.height }, other)
+    );
+
+    if (collidingItems.length === 0) {
+      return { x, y };
+    }
+
+    // Calculate separation vector (push away from average center of collisions)
+    let pushX = 0;
+    let pushY = 0;
+    const cx = x + item.width / 2;
+    const cy = y + item.height / 2;
+
+    collidingItems.forEach(other => {
+      const ocx = other.x + other.width / 2;
+      const ocy = other.y + other.height / 2;
+      
+      let dx = cx - ocx;
+      let dy = cy - ocy;
+
+      // If perfectly overlapping, pick a bias direction
+      if (Math.abs(dx) < 1 && Math.abs(dy) < 1) {
+        dx = gridSize;
+        dy = gridSize;
+      }
+
+      pushX += dx;
+      pushY += dy;
+    });
+
+    // Normalize and scale by grid size for the next step
+    const mag = Math.hypot(pushX, pushY);
+    if (mag === 0) {
+        pushX = gridSize;
+        pushY = 0;
+    } else {
+        pushX = (pushX / mag) * gridSize;
+        pushY = (pushY / mag) * gridSize;
+    }
+
+    // Apply push
+    x += pushX;
+    y += pushY;
+
+    // Snap result to grid
+    x = Math.round(x / gridSize) * gridSize;
+    y = Math.round(y / gridSize) * gridSize;
+
+    attempts++;
+  }
+
+  // If we ran out of attempts, just return the last calculated position (better than staying inside)
+  return { x, y };
 };

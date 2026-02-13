@@ -1,7 +1,7 @@
 import { useState, useCallback } from 'react';
 import { CanvasItem, LoadingCanvasItem } from '../types';
 import { compressImage } from '../utils/imageProcessing';
-import { isColliding } from '../utils/geometry';
+import { isColliding, rectIntersects } from '../utils/geometry';
 import { addCanvasItem } from '../utils/db';
 
 export const useFileProcessor = (items: CanvasItem[]) => {
@@ -11,6 +11,7 @@ export const useFileProcessor = (items: CanvasItem[]) => {
     let currentX = x;
     let currentY = y;
 
+    // Create placeholders for visual feedback
     const newLoadingItems: LoadingCanvasItem[] = files.map((f, index) => ({
       id: `loading-${Date.now()}-${index}`,
       name: f.name,
@@ -18,6 +19,9 @@ export const useFileProcessor = (items: CanvasItem[]) => {
       y: currentY + (index * 20)
     }));
     setLoadingItems(prev => [...prev, ...newLoadingItems]);
+
+    // Track regions occupied by items processed in this batch to prevent self-collision
+    const batchOccupiedRects: { x: number, y: number, width: number, height: number }[] = [];
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
@@ -48,18 +52,34 @@ export const useFileProcessor = (items: CanvasItem[]) => {
         const { base64, width, height } = await compressImage(fileToProcess);
 
         const gridSize = 40;
+        // Start search from placeholder position
         let finalX = placeholder.x - width / 2;
         let finalY = placeholder.y - height / 2;
 
         finalX = Math.round(finalX / gridSize) * gridSize;
         finalY = Math.round(finalY / gridSize) * gridSize;
 
+        // Smart Placement: Check against EXISTING items AND items processed in this BATCH
         let attempts = 0;
-        while (isColliding({ x: finalX, y: finalY, width, height }, items, '') && attempts < 100) {
+        const candidateRect = { x: finalX, y: finalY, width, height };
+        
+        const checkCollision = (rect: typeof candidateRect) => {
+            return isColliding(rect, items, '') || batchOccupiedRects.some(r => rectIntersects(rect, r));
+        };
+
+        // Spiral search / simple scan to find empty spot
+        while (checkCollision({ x: finalX, y: finalY, width, height }) && attempts < 100) {
           finalX += gridSize;
-          finalY += gridSize;
+          // If we move too far right, drop down a line (simple grid fill strategy)
+          if (attempts % 10 === 0 && attempts > 0) {
+              finalX = placeholder.x - width / 2; // Reset X
+              finalY += gridSize; // Move Y down
+          }
           attempts++;
         }
+
+        // Register this new position as occupied for the next iteration in this loop
+        batchOccupiedRects.push({ x: finalX, y: finalY, width, height });
 
         await addCanvasItem({
           url: base64,
@@ -79,7 +99,7 @@ export const useFileProcessor = (items: CanvasItem[]) => {
             blur: 0,
             sepia: 0
           },
-          zIndex: Date.now()
+          zIndex: Date.now() + i // Increment zIndex to preserve drag order
         });
 
       } catch (e) {

@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { CanvasItem, Point, ResizeHandle } from '../types';
-import { snapToGrid, isColliding } from '../utils/geometry';
+import { snapToGrid, isColliding, findFreePosition } from '../utils/geometry';
 
 interface ItemInteractionConfig {
   item: CanvasItem;
@@ -120,10 +120,8 @@ export const useItemInteraction = ({
           newX = snapToGrid(newX, gridSize);
           newY = snapToGrid(newY, gridSize);
         }
-        const candidate = { x: newX, y: newY, width: startItem.width, height: startItem.height };
-        if (!isColliding(candidate, items, item.id)) {
-          setLocalState({ x: newX, y: newY });
-        }
+        // Removed !isColliding check to allow free movement (dragging over/through items)
+        setLocalState({ x: newX, y: newY });
       }
 
       if (isResizing && resizeStart && startItem) {
@@ -148,26 +146,18 @@ export const useItemInteraction = ({
         candH = Math.max(minSize, candH);
 
         // 2. Enforce Aspect Ratio
-        // Determine which dimension has changed more relative to its size
-        // and use that to drive the other dimension.
         const wRatio = Math.abs(candW - origW) / origW;
         const hRatio = Math.abs(candH - origH) / origH;
 
         let finalW, finalH;
 
         if (wRatio > hRatio) {
-            // Width is the driver
             finalW = candW;
-            if (snapEnabled) {
-                finalW = Math.max(gridSize, snapToGrid(finalW, gridSize));
-            }
+            if (snapEnabled) finalW = Math.max(gridSize, snapToGrid(finalW, gridSize));
             finalH = finalW / aspectRatio;
         } else {
-            // Height is the driver
             finalH = candH;
-            if (snapEnabled) {
-                finalH = Math.max(gridSize, snapToGrid(finalH, gridSize));
-            }
+            if (snapEnabled) finalH = Math.max(gridSize, snapToGrid(finalH, gridSize));
             finalW = finalH * aspectRatio;
         }
 
@@ -175,17 +165,11 @@ export const useItemInteraction = ({
         let finalX = origX;
         let finalY = origY;
 
-        if (handle.includes('w')) {
-            finalX = origX + (origW - finalW);
-        }
-        if (handle.includes('n')) {
-            finalY = origY + (origH - finalH);
-        }
+        if (handle.includes('w')) finalX = origX + (origW - finalW);
+        if (handle.includes('n')) finalY = origY + (origH - finalH);
 
-        const candidate = { x: finalX, y: finalY, width: finalW, height: finalH };
-        if (!isColliding(candidate, items, item.id)) {
-          setLocalState({ x: finalX, y: finalY, width: finalW, height: finalH });
-        }
+        // Removed !isColliding check to allow free resize
+        setLocalState({ x: finalX, y: finalY, width: finalW, height: finalH });
       }
     };
 
@@ -193,8 +177,17 @@ export const useItemInteraction = ({
       if (isDragging) {
         // Was dragging a selected item
         if (hasMovedRef.current && localState) {
-          // Moved -> Update position
-          onUpdate(item.id, localState);
+          // Moved -> Check for overlap and "slide off" if needed
+          const currentState = { ...item, ...localState };
+          const others = items.filter(i => i.id !== item.id);
+          
+          if (isColliding(currentState, others, item.id)) {
+             // Collision detected! Slide off.
+             const { x, y } = findFreePosition(currentState, others, 40);
+             onUpdate(item.id, { ...localState, x, y });
+          } else {
+             onUpdate(item.id, localState);
+          }
         } else if (!hasMovedRef.current) {
           // Didn't move -> Toggle off (Deselect)
           onSelect(null);
@@ -210,7 +203,16 @@ export const useItemInteraction = ({
           }
         }
       } else if (isResizing && localState) {
-        onUpdate(item.id, localState);
+        // Resize complete -> Check for overlap and slide off
+        const currentState = { ...item, ...localState };
+        const others = items.filter(i => i.id !== item.id);
+        
+        if (isColliding(currentState, others, item.id)) {
+           const { x, y } = findFreePosition(currentState, others, 40);
+           onUpdate(item.id, { ...localState, x, y });
+        } else {
+           onUpdate(item.id, localState);
+        }
       }
 
       setIsDragging(false);
@@ -235,7 +237,7 @@ export const useItemInteraction = ({
       window.removeEventListener('touchmove', handleGlobalMove as any);
       window.removeEventListener('touchend', handleUp);
     };
-  }, [isDragging, isResizing, isTapCheck, dragStart, resizeStart, onUpdate, item.id, snapEnabled, localState, items, onSelect]);
+  }, [isDragging, isResizing, isTapCheck, dragStart, resizeStart, onUpdate, item.id, snapEnabled, localState, items, onSelect, item]);
 
   return {
     localState,
