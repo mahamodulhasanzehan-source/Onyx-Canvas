@@ -82,15 +82,19 @@ export const CanvasItem: React.FC<CanvasItemProps> = memo(({
     // Only handle single touch here.
     if (e.touches.length > 1) return;
     
-    // STOP propagation so Canvas doesn't pan
-    e.stopPropagation();
+    // Improved Logic:
+    // If item IS selected, we stop propagation so we can drag it.
+    // If item is NOT selected, we let it bubble so the Canvas can handle panning.
+    if (isSelected) {
+        e.stopPropagation();
+    }
 
     const touch = e.touches[0];
     const mockEvent = {
         button: 0,
         clientX: touch.clientX,
         clientY: touch.clientY,
-        stopPropagation: () => {}, // Handled above
+        stopPropagation: () => {}, // Handled above based on selection
         preventDefault: () => {},
         type: 'touchstart' // Pass type for logic detection
     } as unknown as React.MouseEvent;
@@ -121,10 +125,7 @@ export const CanvasItem: React.FC<CanvasItemProps> = memo(({
   const handleTouchEnd = (e: React.TouchEvent) => {
     if (touchTimer.current) clearTimeout(touchTimer.current);
     
-    // Tap Detection (if no move and no long press)
-    // Actually handleMouseDown handles drag end logic, but we need to ensure "Toggle-on-Tap" logic flows.
-    // useItemInteraction listens to window touchend, so we don't need explicit logic here for drag end.
-    // However, for SELECTION TOGGLE, useItemInteraction does it in handleUp.
+    // Tap Detection is handled by useItemInteraction via window listeners.
   };
 
   const handleNameKeyDown = (e: React.KeyboardEvent) => {

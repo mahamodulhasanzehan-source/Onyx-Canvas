@@ -215,12 +215,16 @@ export const useCanvasGestures = ({
       touchStartPosRef.current = { x: touch.clientX, y: touch.clientY };
       isGestureActiveRef.current = true;
       
-      touchTimerRef.current = setTimeout(() => {
-        if (navigator.vibrate) navigator.vibrate(50);
-        onCanvasContextMenu({ clientX: touch.clientX, clientY: touch.clientY });
-        touchStartPosRef.current = null;
-        isGestureActiveRef.current = false;
-      }, 500);
+      // Only trigger context menu or clear selection if touching the background
+      // If e.target is the container, we are touching background.
+      if (e.target === containerRef.current) {
+        touchTimerRef.current = setTimeout(() => {
+            if (navigator.vibrate) navigator.vibrate(50);
+            onCanvasContextMenu({ clientX: touch.clientX, clientY: touch.clientY });
+            touchStartPosRef.current = null;
+            isGestureActiveRef.current = false;
+        }, 500);
+      }
     }
   };
 
@@ -270,8 +274,10 @@ export const useCanvasGestures = ({
 
   const handleTouchEnd = (e: React.TouchEvent) => {
     if (e.touches.length === 0) {
-        if (touchStartPosRef.current && !lastPinchDistRef.current) {
-            onSelectionChange([]); // Tap BG -> Clear Selection
+        // Clear selection only if tapping the BACKGROUND (target is container)
+        // If target is an item, that item handles its own selection logic.
+        if (touchStartPosRef.current && !lastPinchDistRef.current && e.target === containerRef.current) {
+            onSelectionChange([]); 
         }
 
         if (touchTimerRef.current) clearTimeout(touchTimerRef.current);

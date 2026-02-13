@@ -151,7 +151,9 @@ export const useItemInteraction = ({
 
       if (dragStart) {
         const dist = Math.hypot(clientX - dragStart.x, clientY - dragStart.y);
-        if (dist > 3) {
+        // Increase threshold on touch to prevent accidental drags when trying to tap
+        const moveThreshold = ('touches' in e) ? 10 : 3; 
+        if (dist > moveThreshold) {
             hasMovedRef.current = true;
             if (isTapCheck) setIsTapCheck(false);
         }
