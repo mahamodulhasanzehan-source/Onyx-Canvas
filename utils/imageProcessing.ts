@@ -17,8 +17,7 @@ export const createImage = (url: string): Promise<HTMLImageElement> =>
 
 /**
  * Compresses and resizes an image file to a Base64 string suitable for Firestore.
- * Max dimension: 800px.
- * Quality: 0.8 JPEG.
+ * Tries to maximize quality/resolution while staying under the 1MB document limit.
  */
 export const compressImage = async (file: Blob): Promise<{ base64: string, width: number, height: number }> => {
     return new Promise((resolve, reject) => {
@@ -29,34 +28,69 @@ export const compressImage = async (file: Blob): Promise<{ base64: string, width
                 const src = event.target?.result as string;
                 const img = await createImage(src);
                 
-                const MAX_DIMENSION = 800;
+                // Firestore limit is 1MB (1,048,576 bytes). 
+                // Base64 is ~1.33x larger than binary. 
+                // Safe limit for Base64 string length: ~1,000,000 chars (approx 750KB binary).
+                // This leaves room for other fields in the document.
+                const MAX_BASE64_LENGTH = 1000000; 
+
+                // Start with a reasonably high max dimension (e.g., 2560px for QHD)
+                // We want to preserve as much detail as possible.
                 let width = img.naturalWidth;
                 let height = img.naturalHeight;
-
-                if (width > MAX_DIMENSION || height > MAX_DIMENSION) {
-                    const ratio = width / height;
-                    if (width > height) {
-                        width = MAX_DIMENSION;
-                        height = Math.round(width / ratio);
-                    } else {
-                        height = MAX_DIMENSION;
-                        width = Math.round(height * ratio);
-                    }
+                let quality = 0.9;
+                
+                // Initial cap to 2560 to prevent massive 4k/8k images from choking immediately
+                const INITIAL_MAX = 2560;
+                if (width > INITIAL_MAX || height > INITIAL_MAX) {
+                     const ratio = width / height;
+                     if (width > height) {
+                         width = INITIAL_MAX;
+                         height = Math.round(width / ratio);
+                     } else {
+                         height = INITIAL_MAX;
+                         width = Math.round(height * ratio);
+                     }
                 }
 
                 const canvas = document.createElement('canvas');
-                canvas.width = width;
-                canvas.height = height;
                 const ctx = canvas.getContext('2d');
                 if (!ctx) throw new Error("Could not get canvas context");
 
-                // White background for transparent PNGs converted to JPEG
-                ctx.fillStyle = '#FFFFFF';
-                ctx.fillRect(0, 0, width, height);
-                
-                ctx.drawImage(img, 0, 0, width, height);
+                const attemptCompression = (w: number, h: number, q: number): string => {
+                    canvas.width = w;
+                    canvas.height = h;
+                    // White background for transparent PNGs converted to JPEG
+                    ctx.fillStyle = '#FFFFFF';
+                    ctx.fillRect(0, 0, w, h);
+                    ctx.drawImage(img, 0, 0, w, h);
+                    return canvas.toDataURL('image/jpeg', q);
+                }
 
-                const base64 = canvas.toDataURL('image/jpeg', 0.8);
+                let base64 = attemptCompression(width, height, quality);
+                
+                // Iterative reduction to fit size
+                // Strategy: 
+                // 1. Reduce quality down to 0.5 first (maintain resolution)
+                // 2. If still too big, step down resolution
+                
+                while (base64.length > MAX_BASE64_LENGTH) {
+                    if (quality > 0.55) { // Stop reducing quality at 0.5 to avoid artifacts
+                        quality -= 0.1;
+                        base64 = attemptCompression(width, height, quality);
+                    } else {
+                        // Quality is low, start shrinking image dimensions
+                        width = Math.floor(width * 0.85); // Reduce by 15% each step
+                        height = Math.floor(height * 0.85);
+                        // Reset quality slightly for the new smaller size to keep it looking crisp
+                        quality = 0.8; 
+                        base64 = attemptCompression(width, height, quality);
+                    }
+                    
+                    // Safety break for very small images
+                    if (width < 200) break;
+                }
+
                 resolve({ base64, width, height });
             } catch (e) {
                 reject(e);

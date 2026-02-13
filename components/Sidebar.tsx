@@ -51,7 +51,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose, items, onItem
                   </div>
                   <div className="min-w-0">
                     <p className="text-sm text-zinc-300 group-hover:text-white truncate font-medium">{item.name}</p>
-                    <p className="text-xs text-zinc-500 truncate">{Math.round(item.width)} × {Math.round(item.height)}</p>
+                    {/* Display ORIGINAL resolution (Quality), not current display size */}
+                    <p className="text-xs text-zinc-500 truncate">{Math.round(item.originalWidth)} × {Math.round(item.originalHeight)}</p>
                   </div>
                 </button>
              ))
