@@ -330,6 +330,12 @@ export const useItemInteraction = ({
 
         } else if (!hasMovedRef.current) {
           // Clicked/Tapped without moving -> Toggle Logic
+          
+          // FIX: Prevent ghost mouseup event on touch devices
+          if (isTouch && e.cancelable) {
+              e.preventDefault();
+          }
+
           if (isModifier) {
               // Toggle off
               onSelect(selectedIds.filter(id => id !== item.id));
