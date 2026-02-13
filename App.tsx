@@ -78,6 +78,21 @@ const App: React.FC = () => {
       }));
   };
 
+  const handleGroupDragEnd = async () => {
+      // Grab current positions of all selected items and save them to DB
+      // We use the 'items' from current render scope which should be up-to-date from handleGroupDrag state updates
+      const updates = items
+        .filter(i => selectedIds.includes(i.id))
+        .map(i => ({
+            id: i.id,
+            data: { x: i.x, y: i.y }
+        }));
+      
+      if (updates.length > 0) {
+          await updateItems(updates);
+      }
+  };
+
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0 && canvasRef.current) {
       const viewport = canvasRef.current.getViewport();
@@ -284,6 +299,7 @@ const App: React.FC = () => {
         onCanvasContextMenu={handleCanvasContextMenu}
         onRenameComplete={handleRenameComplete}
         onGroupDrag={handleGroupDrag}
+        onGroupDragEnd={handleGroupDragEnd}
       />
 
       <Toolbar onZoomIn={handleZoomIn} onZoomOut={handleZoomOut} />

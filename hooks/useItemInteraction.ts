@@ -13,6 +13,7 @@ interface ItemInteractionConfig {
   isSelected: boolean;
   selectedIds: string[];
   onGroupDrag?: (dx: number, dy: number) => void;
+  onGroupDragEnd?: () => void;
 }
 
 export const useItemInteraction = ({
@@ -25,7 +26,8 @@ export const useItemInteraction = ({
   isRenaming,
   isSelected,
   selectedIds,
-  onGroupDrag
+  onGroupDrag,
+  onGroupDragEnd
 }: ItemInteractionConfig) => {
   const [localState, setLocalState] = useState<Partial<CanvasItem> | null>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -52,8 +54,6 @@ export const useItemInteraction = ({
     
     // e.type check for touch to enable toggle logic
     // 'touchstart' is passed artificially by CanvasItem
-    // Desktop: Ctrl check handled here? 
-    // Actually, CanvasItem passes native MouseEvent or mocked TouchEvent
     
     hasMovedRef.current = false;
     setDragStart({ x: e.clientX, y: e.clientY });
@@ -119,9 +119,7 @@ export const useItemInteraction = ({
             // Calculate delta since last frame
             // We need absolute position for this item to render correctly locally
             // AND we need to emit delta for others.
-            // Simplified: calculate new pos, diff with current localState, emit diff
             
-            // Actually, simpler: just calculate total displacement from start
             const newX = startItem.x + rawDx;
             const newY = startItem.y + rawDy;
             
@@ -133,9 +131,8 @@ export const useItemInteraction = ({
             const deltaY = snappedY - (localState?.y ?? startItem.y);
 
             if (deltaX !== 0 || deltaY !== 0) {
-                 onGroupDrag(deltaX, deltaY); // Update ALL selected items (including this one via parent re-render or local update?)
-                 // If we rely on parent updating props, it might be slow.
-                 // We must update localState for this item immediately.
+                 onGroupDrag(deltaX, deltaY); 
+                 // We must update localState for this item immediately to keep it snappy
                  setLocalState(prev => ({ 
                      x: (prev?.x ?? startItem.x) + deltaX, 
                      y: (prev?.y ?? startItem.y) + deltaY 
@@ -155,7 +152,6 @@ export const useItemInteraction = ({
       }
 
       if (isResizing && resizeStart && startItem) {
-        // ... (Keep existing resize logic exactly as is, it's perfect)
         const dx = (clientX - resizeStart.startX) / currentScale;
         const dy = (clientY - resizeStart.startY) / currentScale;
         const { origX, origY, origW, origH, handle } = resizeStart;
@@ -197,41 +193,24 @@ export const useItemInteraction = ({
 
       if (isDragging) {
         if (hasMovedRef.current && localState) {
-          // Check collision ONLY for single item drag (Group collision logic handled differently/ignored for drag)
-          if (selectedIds.length <= 1) {
-             const currentState = { ...item, ...localState };
-             const others = items.filter(i => i.id !== item.id);
-             if (isColliding(currentState, others, item.id)) {
-                 const { x, y } = findFreePosition(currentState, others, 40);
-                 onUpdate(item.id, { ...localState, x, y });
-             } else {
-                 onUpdate(item.id, localState);
-             }
+          
+          if (selectedIds.length > 1) {
+              // Group Drag: Commit ALL changes
+              // We don't perform strict collision check for groups during drag for performance/complexity reasons.
+              // We rely on visual placement.
+              if (onGroupDragEnd) onGroupDragEnd();
           } else {
-              // Group Drag commit handled by parent? 
-              // No, parent updates state during drag via onGroupDrag?
-              // Actually, onGroupDrag updates the rendered state of peers. 
-              // We need to commit the changes to DB.
-              // We will fire a special "commit group drag" event or just rely on the fact 
-              // that the parent has been updating the items in real-time?
-              // React state updates !== DB updates.
-              // This is tricky. Let's simplify: 
-              // If group drag, we assume App handles the "live" update.
-              // But we need to save to DB.
-              // App should expose `commitGroupDrag`.
-              // For now, let's assume single item update for this item, 
-              // peers need to be updated by App logic.
-              
-              // REVISION: The `onGroupDrag` in `CanvasItem` prop should likely update the local
-              // state of *other* items? No, that's too complex for this component.
-              // We will assume `onGroupDrag` provided by App updates the ACTUAL `items` state in App.
-              // So onUp, the items are already at new positions in memory. We just need to sync to DB.
-              // But wait, `onUpdate` prop usually updates DB.
-              
-              // Let's stick to single item safety for now to prevent bugs.
-              // If multi-drag, we assume collision checks are skipped or user is responsible.
-               onUpdate(item.id, localState);
+              // Single Item Drag: Check collision and commit
+              const currentState = { ...item, ...localState };
+              const others = items.filter(i => i.id !== item.id);
+              if (isColliding(currentState, others, item.id)) {
+                  const { x, y } = findFreePosition(currentState, others, 40);
+                  onUpdate(item.id, { ...localState, x, y });
+              } else {
+                  onUpdate(item.id, localState);
+              }
           }
+
         } else if (!hasMovedRef.current) {
           // Clicked/Tapped without moving -> Toggle Logic
           if (isModifier) {
@@ -286,7 +265,7 @@ export const useItemInteraction = ({
       window.removeEventListener('touchmove', handleGlobalMove as any);
       window.removeEventListener('touchend', handleUp);
     };
-  }, [isDragging, isResizing, isTapCheck, dragStart, resizeStart, onUpdate, item.id, snapEnabled, localState, items, onSelect, item, selectedIds, onGroupDrag]);
+  }, [isDragging, isResizing, isTapCheck, dragStart, resizeStart, onUpdate, item.id, snapEnabled, localState, items, onSelect, item, selectedIds, onGroupDrag, onGroupDragEnd]);
 
   return {
     localState,

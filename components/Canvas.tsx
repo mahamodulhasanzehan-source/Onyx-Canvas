@@ -19,6 +19,7 @@ interface CanvasProps {
   onCanvasContextMenu: (e: React.MouseEvent | { clientX: number, clientY: number }) => void;
   onRenameComplete: (id: string, newName: string) => void;
   onGroupDrag?: (dx: number, dy: number) => void;
+  onGroupDragEnd?: () => void;
 }
 
 export interface CanvasHandle {
@@ -40,7 +41,8 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
   onContextMenu,
   onCanvasContextMenu,
   onRenameComplete,
-  onGroupDrag
+  onGroupDrag,
+  onGroupDragEnd
 }, ref) => {
   const viewportRef = useRef<Viewport>({ x: 0, y: 0, scale: 1 });
   const containerRef = useRef<HTMLDivElement>(null);
@@ -134,6 +136,7 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
               isRenaming={renamingId === item.id}
               onRenameComplete={(name) => onRenameComplete(item.id, name)}
               onGroupDrag={onGroupDrag}
+              onGroupDragEnd={onGroupDragEnd}
             />
           ))}
 
