@@ -129,75 +129,62 @@ export const useItemInteraction = ({
       if (isResizing && resizeStart && startItem) {
         const dx = (clientX - resizeStart.startX) / currentScale;
         const dy = (clientY - resizeStart.startY) / currentScale;
-        let newW = resizeStart.origW;
-        let newH = resizeStart.origH;
-        let newX = resizeStart.origX;
-        let newY = resizeStart.origY;
-        const aspectRatio = resizeStart.origW / resizeStart.origH;
-        const isShift = e.shiftKey;
+        
+        const { origX, origY, origW, origH, handle } = resizeStart;
+        const aspectRatio = origW / origH;
 
-        if (resizeStart.handle.includes('e')) newW = resizeStart.origW + dx;
-        if (resizeStart.handle.includes('w')) {
-          const rawNewX = resizeStart.origX + dx;
-          const rawNewW = resizeStart.origW - dx;
-          newX = rawNewX;
-          newW = rawNewW;
-        }
-        if (resizeStart.handle.includes('s')) newH = resizeStart.origH + dy;
-        if (resizeStart.handle.includes('n')) {
-          const rawNewY = resizeStart.origY + dy;
-          const rawNewH = resizeStart.origH - dy;
-          newY = rawNewY;
-          newH = rawNewH;
-        }
+        // 1. Calculate candidate dimensions from mouse position
+        let candW = origW;
+        let candH = origH;
 
-        if (snapEnabled) {
-          const snappedW = Math.max(gridSize, snapToGrid(newW, gridSize));
-          const snappedH = Math.max(gridSize, snapToGrid(newH, gridSize));
-          if (resizeStart.handle.includes('w')) {
-            const rightEdge = resizeStart.origX + resizeStart.origW;
-            const snappedX = snapToGrid(newX, gridSize);
-            if (snappedX < rightEdge - gridSize) {
-              newX = snappedX;
-              newW = rightEdge - snappedX;
-            } else {
-              newX = rightEdge - gridSize;
-              newW = gridSize;
+        if (handle.includes('e')) candW = origW + dx;
+        if (handle.includes('w')) candW = origW - dx;
+        if (handle.includes('s')) candH = origH + dy;
+        if (handle.includes('n')) candH = origH - dy;
+
+        // Ensure minimum dimensions
+        const minSize = snapEnabled ? gridSize : 20;
+        candW = Math.max(minSize, candW);
+        candH = Math.max(minSize, candH);
+
+        // 2. Enforce Aspect Ratio
+        // Determine which dimension has changed more relative to its size
+        // and use that to drive the other dimension.
+        const wRatio = Math.abs(candW - origW) / origW;
+        const hRatio = Math.abs(candH - origH) / origH;
+
+        let finalW, finalH;
+
+        if (wRatio > hRatio) {
+            // Width is the driver
+            finalW = candW;
+            if (snapEnabled) {
+                finalW = Math.max(gridSize, snapToGrid(finalW, gridSize));
             }
-          } else {
-            newW = snappedW;
-          }
-          if (resizeStart.handle.includes('n')) {
-            const bottomEdge = resizeStart.origY + resizeStart.origH;
-            const snappedY = snapToGrid(newY, gridSize);
-            if (snappedY < bottomEdge - gridSize) {
-              newY = snappedY;
-              newH = bottomEdge - snappedY;
-            } else {
-              newY = bottomEdge - gridSize;
-              newH = gridSize;
+            finalH = finalW / aspectRatio;
+        } else {
+            // Height is the driver
+            finalH = candH;
+            if (snapEnabled) {
+                finalH = Math.max(gridSize, snapToGrid(finalH, gridSize));
             }
-          } else {
-            newH = snappedH;
-          }
+            finalW = finalH * aspectRatio;
         }
 
-        if (!isShift && !snapEnabled) {
-          if (resizeStart.handle === 'se') newH = newW / aspectRatio;
-          else if (resizeStart.handle === 'sw') newH = newW / aspectRatio;
-          else if (resizeStart.handle === 'ne') newW = newH * aspectRatio;
-          else if (resizeStart.handle === 'nw') {
-            newH = newW / aspectRatio;
-            newY = resizeStart.origY + (resizeStart.origH - newH);
-          }
+        // 3. Calculate new positions based on handle anchor points
+        let finalX = origX;
+        let finalY = origY;
+
+        if (handle.includes('w')) {
+            finalX = origX + (origW - finalW);
+        }
+        if (handle.includes('n')) {
+            finalY = origY + (origH - finalH);
         }
 
-        newW = Math.max(snapEnabled ? gridSize : 50, newW);
-        newH = Math.max(snapEnabled ? gridSize : 50, newH);
-
-        const candidate = { x: newX, y: newY, width: newW, height: newH };
+        const candidate = { x: finalX, y: finalY, width: finalW, height: finalH };
         if (!isColliding(candidate, items, item.id)) {
-          setLocalState({ x: newX, y: newY, width: newW, height: newH });
+          setLocalState({ x: finalX, y: finalY, width: finalW, height: finalH });
         }
       }
     };
