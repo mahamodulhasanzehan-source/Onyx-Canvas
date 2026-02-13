@@ -80,6 +80,9 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
   const gridSize = 40 * scaleState;
   const gridOffset = gridSize / 2;
 
+  // Fix mobile crash: Hide grid if dots are too dense (scale < 0.4 roughly)
+  const gridOpacity = gridSize < 16 ? 0 : 1;
+
   return (
     <div
       ref={containerRef}
@@ -102,7 +105,8 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
           backgroundImage: 'radial-gradient(circle, #27272a 3px, transparent 3px)',
           backgroundSize: `${gridSize}px ${gridSize}px`,
           backgroundPosition: `${-gridOffset}px ${-gridOffset}px`,
-          opacity: 1
+          opacity: gridOpacity,
+          transition: 'opacity 0.2s ease-out' 
         }}
       />
 

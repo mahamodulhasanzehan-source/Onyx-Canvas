@@ -48,7 +48,14 @@ export const useCanvasGestures = ({
       const offset = gridSize / 2;
       gridEl.style.backgroundPosition = `${x - offset}px ${y - offset}px`;
       gridEl.style.backgroundSize = `${gridSize}px ${gridSize}px`;
-      gridEl.style.opacity = "1";
+      
+      // OPTIMIZATION: Fade out grid when zoomed out too far to prevent mobile crashes
+      // Rendering thousands of radial gradients kills mobile GPU/CPU
+      if (gridSize < 16) {
+        gridEl.style.opacity = "0";
+      } else {
+        gridEl.style.opacity = "1";
+      }
     }
   }, [itemsContainerRef, viewportRef]);
 
@@ -165,14 +172,7 @@ export const useCanvasGestures = ({
         };
 
         const selected = items.filter(item => rectIntersects(worldRect, item)).map(i => i.id);
-        
-        // Additive selection per instructions? 
-        // "perform AABB ... any picture intersecting ... add to selectedNodeIds"
-        // Let's assume standard behavior: Replace selection unless Shift is held?
-        // Prompt says "add to your selectedNodeIds". Implies additive.
-        // We will make it additive if needed, but standard box select replaces.
-        // Let's implement ADDITIVE as per strict instruction "add to your selectedNodeIds"
-        onSelectionChange(selected); // Actually typically box select is new selection.
+        onSelectionChange(selected);
         
         setIsSelecting(false);
         setSelectionBox(null);
@@ -214,11 +214,6 @@ export const useCanvasGestures = ({
       lastTouchRef.current = { x: touch.clientX, y: touch.clientY };
       touchStartPosRef.current = { x: touch.clientX, y: touch.clientY };
       isGestureActiveRef.current = true;
-      
-      // Tap BG to clear selection happens here?
-      // "only clear the selection array when the user taps the empty background canvas"
-      // If we are here, we likely touched BG because item stops prop.
-      // But we wait to see if it's a drag or tap.
       
       touchTimerRef.current = setTimeout(() => {
         if (navigator.vibrate) navigator.vibrate(50);
@@ -275,7 +270,6 @@ export const useCanvasGestures = ({
 
   const handleTouchEnd = (e: React.TouchEvent) => {
     if (e.touches.length === 0) {
-        // Check for Tap on BG
         if (touchStartPosRef.current && !lastPinchDistRef.current) {
             onSelectionChange([]); // Tap BG -> Clear Selection
         }

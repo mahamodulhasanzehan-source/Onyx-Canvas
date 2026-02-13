@@ -49,46 +49,69 @@ export const useFileProcessor = (items: CanvasItem[]) => {
       }
 
       try {
-        const { base64, width, height } = await compressImage(fileToProcess);
+        const { base64, width: originalWidth, height: originalHeight } = await compressImage(fileToProcess);
+
+        // --- SCALE LOGIC ---
+        // Decouple visual size from quality. 
+        // We want high res for zoom (originalWidth), but reasonable grid size (visualWidth).
+        const MAX_VISUAL_SIZE = 800; // Pixels
+        let visualWidth = originalWidth;
+        let visualHeight = originalHeight;
+
+        if (visualWidth > MAX_VISUAL_SIZE || visualHeight > MAX_VISUAL_SIZE) {
+            const ratio = visualWidth / visualHeight;
+            if (visualWidth > visualHeight) {
+                visualWidth = MAX_VISUAL_SIZE;
+                visualHeight = visualWidth / ratio;
+            } else {
+                visualHeight = MAX_VISUAL_SIZE;
+                visualWidth = visualHeight * ratio;
+            }
+        }
 
         const gridSize = 40;
+        // Snap visual dimensions to grid for cleaner layout
+        visualWidth = Math.max(gridSize, Math.round(visualWidth / gridSize) * gridSize);
+        visualHeight = Math.max(gridSize, Math.round(visualHeight / gridSize) * gridSize);
+
         // Start search from placeholder position
-        let finalX = placeholder.x - width / 2;
-        let finalY = placeholder.y - height / 2;
+        let finalX = placeholder.x - visualWidth / 2;
+        let finalY = placeholder.y - visualHeight / 2;
 
         finalX = Math.round(finalX / gridSize) * gridSize;
         finalY = Math.round(finalY / gridSize) * gridSize;
 
         // Smart Placement: Check against EXISTING items AND items processed in this BATCH
         let attempts = 0;
-        const candidateRect = { x: finalX, y: finalY, width, height };
+        // Use visual dimensions for collision check
+        const candidateRect = { x: finalX, y: finalY, width: visualWidth, height: visualHeight };
         
         const checkCollision = (rect: typeof candidateRect) => {
             return isColliding(rect, items, '') || batchOccupiedRects.some(r => rectIntersects(rect, r));
         };
 
         // Spiral search / simple scan to find empty spot
-        while (checkCollision({ x: finalX, y: finalY, width, height }) && attempts < 100) {
+        while (checkCollision({ x: finalX, y: finalY, width: visualWidth, height: visualHeight }) && attempts < 100) {
           finalX += gridSize;
           // If we move too far right, drop down a line (simple grid fill strategy)
           if (attempts % 10 === 0 && attempts > 0) {
-              finalX = placeholder.x - width / 2; // Reset X
+              finalX = placeholder.x - visualWidth / 2; // Reset X
               finalY += gridSize; // Move Y down
           }
           attempts++;
         }
 
         // Register this new position as occupied for the next iteration in this loop
-        batchOccupiedRects.push({ x: finalX, y: finalY, width, height });
+        batchOccupiedRects.push({ x: finalX, y: finalY, width: visualWidth, height: visualHeight });
 
         await addCanvasItem({
           url: base64,
           x: finalX,
           y: finalY,
-          width,
-          height,
-          originalWidth: width,
-          originalHeight: height,
+          width: visualWidth,       // Use scaled visual size
+          height: visualHeight,     // Use scaled visual size
+          originalWidth: originalWidth,   // Keep full resolution for zoom/edit
+          originalHeight: originalHeight, // Keep full resolution for zoom/edit
           rotation: 0,
           name: fileName.split('.')[0] || 'Untitled',
           filters: { 
