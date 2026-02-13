@@ -64,15 +64,22 @@ export const useItemInteraction = ({
     }
   };
 
-  const handleResizeStart = (e: React.MouseEvent, handle: ResizeHandle) => {
+  const handleResizeStart = (e: React.MouseEvent | React.TouchEvent, handle: ResizeHandle) => {
     e.stopPropagation();
-    e.preventDefault();
+    
+    // Prevent default on touch to stop scrolling/emulated mouse events
+    if (e.cancelable && e.type === 'touchstart') e.preventDefault();
+    if (e.type === 'mousedown') e.preventDefault(); // Prevent text selection
+
+    const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
+    const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
+
     setIsResizing(true);
     initialDragItemRef.current = { ...item };
     setLocalState({ x: item.x, y: item.y, width: item.width, height: item.height });
     setResizeStart({
-      startX: e.clientX,
-      startY: e.clientY,
+      startX: clientX,
+      startY: clientY,
       origX: item.x,
       origY: item.y,
       origW: item.width,
@@ -82,28 +89,31 @@ export const useItemInteraction = ({
   };
 
   useEffect(() => {
-    const handleGlobalMove = (e: MouseEvent) => {
-      if (!dragStart) return;
+    const handleGlobalMove = (e: MouseEvent | TouchEvent) => {
+      // Allow if either dragStart OR resizeStart exists
+      if (!dragStart && !resizeStart) return;
+
+      const clientX = 'touches' in e ? (e as TouchEvent).touches[0].clientX : (e as MouseEvent).clientX;
+      const clientY = 'touches' in e ? (e as TouchEvent).touches[0].clientY : (e as MouseEvent).clientY;
 
       const currentScale = scaleRef.current;
       const startItem = initialDragItemRef.current;
       const gridSize = 40;
 
-      // Check for movement threshold
-      const dist = Math.hypot(e.clientX - dragStart.x, e.clientY - dragStart.y);
-      if (dist > 3) {
-          hasMovedRef.current = true;
-          
-          // If we were checking for a tap on an unselected item, and we moved, 
-          // it's a pan. Cancel the tap check so we don't select on release.
-          if (isTapCheck) {
-            setIsTapCheck(false);
-          }
+      // Check for movement threshold (only relevant for dragging/tap check)
+      if (dragStart) {
+        const dist = Math.hypot(clientX - dragStart.x, clientY - dragStart.y);
+        if (dist > 3) {
+            hasMovedRef.current = true;
+            if (isTapCheck) {
+              setIsTapCheck(false);
+            }
+        }
       }
 
-      if (isDragging && startItem) {
-        const dx = (e.clientX - dragStart.x) / currentScale;
-        const dy = (e.clientY - dragStart.y) / currentScale;
+      if (isDragging && startItem && dragStart) {
+        const dx = (clientX - dragStart.x) / currentScale;
+        const dy = (clientY - dragStart.y) / currentScale;
         let newX = startItem.x + dx;
         let newY = startItem.y + dy;
         if (snapEnabled) {
@@ -117,8 +127,8 @@ export const useItemInteraction = ({
       }
 
       if (isResizing && resizeStart && startItem) {
-        const dx = (e.clientX - resizeStart.startX) / currentScale;
-        const dy = (e.clientY - resizeStart.startY) / currentScale;
+        const dx = (clientX - resizeStart.startX) / currentScale;
+        const dy = (clientY - resizeStart.startY) / currentScale;
         let newW = resizeStart.origW;
         let newH = resizeStart.origH;
         let newX = resizeStart.origX;
@@ -208,14 +218,10 @@ export const useItemInteraction = ({
           // Didn't move -> Select it
           onSelect(item.id);
           
-          // CRITICAL FIX: Prevent ghost clicks on mobile
-          // If this was a tap on touch device, prevent default to stop mouse emulation
-          // which would otherwise bubble to Canvas and cause immediate deselection.
           if (e.type === 'touchend' && e.cancelable) {
             e.preventDefault();
           }
         }
-        // If moved, it was a pan, do nothing (Canvas handled it)
       } else if (isResizing && localState) {
         onUpdate(item.id, localState);
       }
@@ -234,8 +240,6 @@ export const useItemInteraction = ({
       window.addEventListener('mouseup', handleUp);
       // Also listen for touch events on window to handle the "global move" equivalence for touch
       window.addEventListener('touchmove', handleGlobalMove as any, { passive: false });
-      
-      // FIX: Add passive: false to allow e.preventDefault() in handleUp
       window.addEventListener('touchend', handleUp, { passive: false });
     }
     return () => {

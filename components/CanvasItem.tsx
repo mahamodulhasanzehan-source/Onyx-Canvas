@@ -116,7 +116,8 @@ export const CanvasItem: React.FC<CanvasItemProps> = memo(({
     onRenameComplete?.(nameInput);
   };
 
-  const handleSize = 10 / scale;
+  // Increased visual size for better touch/click targets
+  const handleSize = 24 / scale;
   const handleOffset = -handleSize / 2;
 
   const displayX = localState?.x ?? item.x;
@@ -127,11 +128,8 @@ export const CanvasItem: React.FC<CanvasItemProps> = memo(({
   const transitionClass = (isDragging || isResizing) ? 'duration-0' : 'duration-300';
 
   // --- Non-destructive Crop Logic ---
-  // Default to full image if no crop
   const crop = item.crop || { x: 0, y: 0, width: 1, height: 1 };
   
-  // Calculate the dimensions of the inner image needed to fill the crop window
-  // If crop.width is 0.5 (half image), the inner image needs to be 200% of the container width.
   const innerWidthPercent = (1 / crop.width) * 100;
   const innerHeightPercent = (1 / crop.height) * 100;
   
@@ -166,7 +164,6 @@ export const CanvasItem: React.FC<CanvasItemProps> = memo(({
       <div className={`w-full h-full relative overflow-hidden transition-all ${transitionClass} bg-zinc-900 ${isSelected ? 'ring-2 ring-blue-500 shadow-[0_0_30px_rgba(59,130,246,0.3)]' : 'hover:ring-1 hover:ring-white/50 hover:shadow-lg'}`}>
         {item.url ? (
           <div className="w-full h-full relative overflow-hidden">
-            {/* Inner Content Wrapper for Crop */}
             <div 
                 className="absolute origin-top-left"
                 style={{
@@ -176,7 +173,6 @@ export const CanvasItem: React.FC<CanvasItemProps> = memo(({
                     top: `${-(crop.y / crop.height) * 100}%`,
                 }}
             >
-                {/* Main Image */}
                 <img
                     src={item.url}
                     alt={item.name}
@@ -188,7 +184,6 @@ export const CanvasItem: React.FC<CanvasItemProps> = memo(({
                     draggable={false}
                 />
                 
-                {/* Drawing Layer - No filters, no rotation? Or should it rotate with image? Usually rotates with image. */}
                 {item.drawingUrl && (
                     <img 
                         src={item.drawingUrl}
@@ -209,10 +204,30 @@ export const CanvasItem: React.FC<CanvasItemProps> = memo(({
 
         {isSelected && (
           <>
-            <div style={{ width: handleSize, height: handleSize, top: handleOffset, left: handleOffset }} className="absolute bg-blue-500 rounded-full cursor-nw-resize hover:scale-150 transition-transform shadow-sm z-50" onMouseDown={(e) => handleResizeStart(e, 'nw')} />
-            <div style={{ width: handleSize, height: handleSize, top: handleOffset, right: handleOffset }} className="absolute bg-blue-500 rounded-full cursor-ne-resize hover:scale-150 transition-transform shadow-sm z-50" onMouseDown={(e) => handleResizeStart(e, 'ne')} />
-            <div style={{ width: handleSize, height: handleSize, bottom: handleOffset, left: handleOffset }} className="absolute bg-blue-500 rounded-full cursor-sw-resize hover:scale-150 transition-transform shadow-sm z-50" onMouseDown={(e) => handleResizeStart(e, 'sw')} />
-            <div style={{ width: handleSize, height: handleSize, bottom: handleOffset, right: handleOffset }} className="absolute bg-blue-500 rounded-full cursor-se-resize hover:scale-150 transition-transform shadow-sm z-50" onMouseDown={(e) => handleResizeStart(e, 'se')} />
+            <div 
+                style={{ width: handleSize, height: handleSize, top: handleOffset, left: handleOffset }} 
+                className="absolute bg-blue-500 rounded-full cursor-nw-resize hover:scale-150 transition-transform shadow-sm z-50 touch-manipulation" 
+                onMouseDown={(e) => handleResizeStart(e, 'nw')}
+                onTouchStart={(e) => handleResizeStart(e, 'nw')}
+            />
+            <div 
+                style={{ width: handleSize, height: handleSize, top: handleOffset, right: handleOffset }} 
+                className="absolute bg-blue-500 rounded-full cursor-ne-resize hover:scale-150 transition-transform shadow-sm z-50 touch-manipulation" 
+                onMouseDown={(e) => handleResizeStart(e, 'ne')}
+                onTouchStart={(e) => handleResizeStart(e, 'ne')}
+            />
+            <div 
+                style={{ width: handleSize, height: handleSize, bottom: handleOffset, left: handleOffset }} 
+                className="absolute bg-blue-500 rounded-full cursor-sw-resize hover:scale-150 transition-transform shadow-sm z-50 touch-manipulation" 
+                onMouseDown={(e) => handleResizeStart(e, 'sw')}
+                onTouchStart={(e) => handleResizeStart(e, 'sw')}
+            />
+            <div 
+                style={{ width: handleSize, height: handleSize, bottom: handleOffset, right: handleOffset }} 
+                className="absolute bg-blue-500 rounded-full cursor-se-resize hover:scale-150 transition-transform shadow-sm z-50 touch-manipulation" 
+                onMouseDown={(e) => handleResizeStart(e, 'se')}
+                onTouchStart={(e) => handleResizeStart(e, 'se')}
+            />
           </>
         )}
       </div>
