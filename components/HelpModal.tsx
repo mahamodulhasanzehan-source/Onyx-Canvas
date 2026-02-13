@@ -60,7 +60,7 @@ export const HelpModal: React.FC<HelpModalProps> = ({ onClose }) => {
                         <InstructionItem 
                             icon={<Search size={18} />}
                             title="Navigation"
-                            text="Click the Search icon to fly to the nearest image if you get lost."
+                            text="Click Search to find closest image. Right-click Search to jump to Origin (0,0)."
                         />
                         <InstructionItem 
                             icon={<List size={18} />}
@@ -103,7 +103,7 @@ export const HelpModal: React.FC<HelpModalProps> = ({ onClose }) => {
                         <InstructionItem 
                             icon={<Search size={18} />}
                             title="Navigation"
-                            text="Tap the Search icon (top-left) to center the view on the nearest image."
+                            text="Tap Search to find nearest image. Long-press Search to jump to Origin (0,0)."
                         />
                         <InstructionItem 
                             icon={<List size={18} />}

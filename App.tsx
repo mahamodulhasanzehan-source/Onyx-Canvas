@@ -129,6 +129,15 @@ const App: React.FC = () => {
     canvasRef.current.flyTo(newX, newY, targetScale);
   };
 
+  const handleNavigateToOrigin = () => {
+    if (canvasRef.current) {
+      // Moves 0,0 to the center of the screen
+      const cx = window.innerWidth / 2;
+      const cy = window.innerHeight / 2;
+      canvasRef.current.flyTo(cx, cy, 1);
+    }
+  };
+
   const handleSidebarItemClick = (item: CanvasItem) => {
     if (!canvasRef.current) return;
     const screenCenterX = window.innerWidth / 2;
@@ -231,6 +240,7 @@ const App: React.FC = () => {
 
       <NavigationControls
         onFindClosest={handleFindClosest}
+        onNavigateToOrigin={handleNavigateToOrigin}
         onToggleSidebar={() => setSidebarOpen(!sidebarOpen)}
         onShowHelp={() => setHelpOpen(true)}
       />
