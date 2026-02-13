@@ -36,13 +36,26 @@ export const isGroupColliding = (
   projections: { id: string, x: number, y: number, width: number, height: number }[],
   allItems: CanvasItem[]
 ): boolean => {
-  // Filter out items that are part of the moving group from the "obstacles" list
   const movingIds = new Set(projections.map(p => p.id));
   const obstacles = allItems.filter(item => !movingIds.has(item.id));
 
-  return projections.some(proj => {
+  // 1. Check collision against obstacles (unselected items)
+  const hitsObstacle = projections.some(proj => {
       return obstacles.some(obs => rectIntersects(proj, obs));
   });
+  if (hitsObstacle) return true;
+
+  // 2. Check strict self-collision among the projected items
+  // This prevents alignment tools from stacking images on top of each other
+  for (let i = 0; i < projections.length; i++) {
+      for (let j = i + 1; j < projections.length; j++) {
+          if (rectIntersects(projections[i], projections[j])) {
+              return true;
+          }
+      }
+  }
+
+  return false;
 };
 
 export const getAlignmentProjections = (
@@ -55,42 +68,24 @@ export const getAlignmentProjections = (
     const result = selectedItems.map(i => ({ ...i })); // Clone basic props
 
     if (type === 'align-h') {
-        // Align Centers Vertically (share same Y center) -> Actually "Align Horizontal" usually means align Y axis so they sit on a horizontal line?
-        // Standard naming: "Align Horizontal Centers" means they line up vertically. "Align Vertical Centers" means they line up horizontally.
-        // Let's interpret "Align Horizontally" as making them share the same Y-center (forming a row).
         const avgY = selectedItems.reduce((sum, i) => sum + (i.y + i.height/2), 0) / selectedItems.length;
         result.forEach(i => {
             i.y = snapToGrid(avgY - i.height/2, gridSize);
         });
     } else if (type === 'align-v') {
-        // Form a column
         const avgX = selectedItems.reduce((sum, i) => sum + (i.x + i.width/2), 0) / selectedItems.length;
         result.forEach(i => {
             i.x = snapToGrid(avgX - i.width/2, gridSize);
         });
     } else if (type === 'dist-h') {
-        // Equal spacing horizontally between first and last
         const sorted = [...result].sort((a, b) => a.x - b.x);
-        const first = sorted[0];
-        const last = sorted[sorted.length - 1];
-        const totalSpan = (last.x) - (first.x + first.width); // gap between first's right and last's left
-        
-        // Actually, we usually distribute centers or distribute space. Let's distribute space between edges.
-        // Range: First Left to Last Right.
-        const startX = first.x;
-        const totalWidth = (last.x + last.width) - first.x;
-        
-        // If we want equal gaps:
-        // totalSpaceAvailable = (Last.x - First.Right) - sum(widths of middle items)
-        // simpler: Distribute centers if items are same size, but they aren't.
-        // Let's implement: Distribute "Centers" evenly
         const minX = Math.min(...selectedItems.map(i => i.x));
         const maxX = Math.max(...selectedItems.map(i => i.x));
         const span = maxX - minX;
         const step = span / (selectedItems.length - 1);
         
         sorted.forEach((item, idx) => {
-            if (idx === 0 || idx === sorted.length - 1) return; // Keep anchors
+            if (idx === 0 || idx === sorted.length - 1) return;
             item.x = snapToGrid(minX + (step * idx), gridSize);
         });
     } else if (type === 'dist-v') {
@@ -105,12 +100,11 @@ export const getAlignmentProjections = (
              item.y = snapToGrid(minY + (step * idx), gridSize);
         });
     } else if (type === 'compact-h') {
-        // Stack horizontally with 0 gap
         const sorted = [...result].sort((a, b) => a.x - b.x);
         let currentX = sorted[0].x;
         sorted.forEach(item => {
             item.x = currentX;
-            currentX += snapToGrid(item.width + 10, gridSize); // +10 padding
+            currentX += snapToGrid(item.width + 10, gridSize); 
         });
     } else if (type === 'compact-v') {
         const sorted = [...result].sort((a, b) => a.y - b.y);
@@ -133,61 +127,73 @@ export const getScaledDimensions = (
 };
 
 export const findFreePosition = (
-  item: { x: number; y: number; width: number; height: number },
+  item: { x: number; y: number; width: number; height: number; id?: string },
   others: CanvasItem[],
   gridSize: number
 ): Point => {
-  let { x, y } = item;
-  let attempts = 0;
-  const MAX_ATTEMPTS = 50;
+  // Strict deterministic search using Grid Spiral
+  // This guarantees finding the nearest valid non-overlapping position
+  
+  const startX = Math.round(item.x / gridSize) * gridSize;
+  const startY = Math.round(item.y / gridSize) * gridSize;
+  
+  const width = item.width;
+  const height = item.height;
+  const id = item.id || '';
 
-  while (attempts < MAX_ATTEMPTS) {
-    const collidingItems = others.filter(other => 
-      rectIntersects({ x, y, width: item.width, height: item.height }, other)
-    );
+  // Helper to check collision at a specific point
+  const isPosValid = (cx: number, cy: number) => {
+      // Check collision with others
+      const rect = { x: cx, y: cy, width, height };
+      const hit = others.some(other => {
+          if (other.id === id) return false;
+          return rectIntersects(rect, other);
+      });
+      return !hit;
+  };
 
-    if (collidingItems.length === 0) {
-      return { x, y };
-    }
+  // 1. Check origin
+  if (isPosValid(startX, startY)) {
+      return { x: startX, y: startY };
+  }
 
-    // Calculate separation vector
-    let pushX = 0;
-    let pushY = 0;
-    const cx = x + item.width / 2;
-    const cy = y + item.height / 2;
+  // 2. Spiral Search
+  // Expand in layers: distance 1 grid unit, 2 units, etc.
+  let layer = 1;
+  const MAX_LAYERS = 50; // Search radius approx 2000px
 
-    collidingItems.forEach(other => {
-      const ocx = other.x + other.width / 2;
-      const ocy = other.y + other.height / 2;
+  while (layer <= MAX_LAYERS) {
+      // Top Row (moving right)
+      for (let i = -layer; i <= layer; i++) {
+          const x = startX + (i * gridSize);
+          const y = startY - (layer * gridSize);
+          if (isPosValid(x, y)) return { x, y };
+      }
       
-      let dx = cx - ocx;
-      let dy = cy - ocy;
-
-      if (Math.abs(dx) < 1 && Math.abs(dy) < 1) {
-        dx = gridSize;
-        dy = gridSize;
+      // Right Column (moving down)
+      for (let i = -layer + 1; i <= layer; i++) {
+          const x = startX + (layer * gridSize);
+          const y = startY + (i * gridSize);
+          if (isPosValid(x, y)) return { x, y };
       }
 
-      pushX += dx;
-      pushY += dy;
-    });
+      // Bottom Row (moving left)
+      for (let i = -layer; i < layer; i++) {
+          const x = startX + (i * gridSize);
+          const y = startY + (layer * gridSize);
+          if (isPosValid(x, y)) return { x, y };
+      }
 
-    const mag = Math.hypot(pushX, pushY);
-    if (mag === 0) {
-        pushX = gridSize;
-        pushY = 0;
-    } else {
-        pushX = (pushX / mag) * gridSize;
-        pushY = (pushY / mag) * gridSize;
-    }
+      // Left Column (moving up)
+      for (let i = -layer + 1; i < layer; i++) {
+          const x = startX - (layer * gridSize);
+          const y = startY + (i * gridSize);
+          if (isPosValid(x, y)) return { x, y };
+      }
 
-    x += pushX;
-    y += pushY;
-
-    x = Math.round(x / gridSize) * gridSize;
-    y = Math.round(y / gridSize) * gridSize;
-
-    attempts++;
+      layer++;
   }
-  return { x, y };
+
+  // Fallback: If absolutely jammed (unlikely in infinite canvas), return original
+  return { x: startX, y: startY };
 };

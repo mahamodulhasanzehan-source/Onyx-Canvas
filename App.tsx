@@ -40,10 +40,25 @@ const App: React.FC = () => {
   });
 
   const handleDeleteSelection = async (targetId?: string) => {
-    // If targetId is provided, delete that one.
-    // If not, delete all selected.
-    const idsToDelete = targetId ? [targetId] : (selectedIds.length > 0 ? selectedIds : [contextMenu.itemId]);
+    let idsToDelete = selectedIds;
     
+    // Check if a specific target was requested (e.g. from context menu)
+    if (targetId) {
+        // If the target is NOT currently selected, we only delete that one target
+        if (!selectedIds.includes(targetId)) {
+            idsToDelete = [targetId];
+        }
+        // Otherwise (if target IS selected), we delete the entire selection (default behavior)
+    } else {
+        // No specific target (e.g. Delete key)
+        if (idsToDelete.length === 0 && contextMenu.itemId) {
+             // Fallback to context menu item if no selection exists
+             idsToDelete = [contextMenu.itemId];
+        }
+    }
+    
+    if (idsToDelete.length === 0) return;
+
     // Optimistic Update
     setItems(prev => prev.filter(i => !idsToDelete.includes(i.id)));
     setSelectedIds([]);
@@ -61,35 +76,7 @@ const App: React.FC = () => {
           }
           return item;
       }));
-      // Note: We are NOT persisting to DB here for performance.
-      // Persistence happens onMouseUp inside useItemInteraction via onUpdate
-      // However, useItemInteraction only calls onUpdate for the DRAGGED item.
-      // We need to persist the OTHERS.
-      
-      // Since useItemInteraction component doesn't know about peers persistence easily,
-      // we should probably debounce save or save on drag end in App.
-      // For now, this visual sync is enough for the interaction.
-      // To properly save: We need to know when drag ENDS.
-      // But we don't have that signal here easily without prop drilling.
-      // We will rely on the user clicking "Save" or just moving them individually if strict persistence is needed,
-      // OR better: we add a specific 'onGroupDragEnd' prop later.
-      // Actually, let's just trigger a debounced update or rely on the fact that `items` state is updated
-      // and we sync `items` to DB? No, `items` is local state from DB subscription.
-      
-      // Let's implement a quick fix:
-      // We will perform the DB update for peers immediately but throttled? No.
-      // Correct way: The Drag Leader updates itself via `onUpdate`.
-      // We need to update the others.
-      // Let's accept this limitation for now: Group drag moves visuals, but might desync if we don't save.
-      // Actually, let's persist immediately. Firestore handles high frequency writes okay-ish, or we batch?
-      // `updateItems` is available.
-      
-      // We won't call DB on every frame. We will update LOCAL state here (setItems) which makes UI responsive.
-      // And we need to debounced-save.
   };
-  
-  // Persist group moves (Debounced)
-  // Real implementation would require a 'dragEnd' event from child.
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0 && canvasRef.current) {
