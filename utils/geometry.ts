@@ -21,6 +21,22 @@ export const rectIntersects = (
   );
 };
 
+export const getBoundingBox = (items: CanvasItem[]): { x: number, y: number, width: number, height: number, maxX: number, maxY: number } | null => {
+    if (items.length === 0) return null;
+    const minX = Math.min(...items.map(i => i.x));
+    const minY = Math.min(...items.map(i => i.y));
+    const maxX = Math.max(...items.map(i => i.x + i.width));
+    const maxY = Math.max(...items.map(i => i.y + i.height));
+    return {
+        x: minX,
+        y: minY,
+        width: maxX - minX,
+        height: maxY - minY,
+        maxX,
+        maxY
+    };
+};
+
 export const isColliding = (
   candidate: { x: number; y: number; width: number; height: number },
   others: CanvasItem[],

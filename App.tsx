@@ -68,8 +68,22 @@ const App: React.FC = () => {
     }
   };
 
+  const handleBatchLocalUpdate = (updates: { id: string, data: Partial<CanvasItem> }[]) => {
+      // Updates local state ONLY (no DB write)
+      // Used for high-frequency drag/resize operations
+      const updateMap = new Map(updates.map(u => [u.id, u.data]));
+      
+      setItems(prev => prev.map(item => {
+          if (updateMap.has(item.id)) {
+              return { ...item, ...updateMap.get(item.id)! };
+          }
+          return item;
+      }));
+  };
+
   const handleGroupDrag = (dx: number, dy: number) => {
-      // Update ALL selected items positions locally
+      // Wrapper for existing single-step drag logic if needed, 
+      // but simpler to reuse batchLocalUpdate now.
       setItems(prev => prev.map(item => {
           if (selectedIds.includes(item.id)) {
               return { ...item, x: item.x + dx, y: item.y + dy };
@@ -85,7 +99,7 @@ const App: React.FC = () => {
         .filter(i => selectedIds.includes(i.id))
         .map(i => ({
             id: i.id,
-            data: { x: i.x, y: i.y }
+            data: { x: i.x, y: i.y, width: i.width, height: i.height } // Added width/height for resize persistence
         }));
       
       if (updates.length > 0) {
@@ -300,6 +314,7 @@ const App: React.FC = () => {
         onRenameComplete={handleRenameComplete}
         onGroupDrag={handleGroupDrag}
         onGroupDragEnd={handleGroupDragEnd}
+        onBatchLocalUpdate={handleBatchLocalUpdate}
       />
 
       <Toolbar onZoomIn={handleZoomIn} onZoomOut={handleZoomOut} />

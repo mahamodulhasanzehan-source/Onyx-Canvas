@@ -19,6 +19,7 @@ export interface CanvasItemProps {
   onRenameComplete?: (newName: string) => void;
   onGroupDrag?: (dx: number, dy: number) => void;
   onGroupDragEnd?: () => void;
+  onBatchLocalUpdate?: (updates: { id: string, data: Partial<ICanvasItem> }[]) => void;
 }
 
 export const CanvasItem: React.FC<CanvasItemProps> = memo(({
@@ -35,7 +36,8 @@ export const CanvasItem: React.FC<CanvasItemProps> = memo(({
   isRenaming,
   onRenameComplete,
   onGroupDrag,
-  onGroupDragEnd
+  onGroupDragEnd,
+  onBatchLocalUpdate
 }) => {
   const {
     localState,
@@ -54,7 +56,8 @@ export const CanvasItem: React.FC<CanvasItemProps> = memo(({
     isSelected,
     selectedIds,
     onGroupDrag,
-    onGroupDragEnd
+    onGroupDragEnd,
+    onBatchLocalUpdate
   });
 
   const [nameInput, setNameInput] = useState(item.name);

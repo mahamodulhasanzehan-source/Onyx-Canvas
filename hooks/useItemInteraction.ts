@@ -1,6 +1,17 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { CanvasItem, Point, ResizeHandle } from '../types';
-import { snapToGrid, isColliding, findFreePosition } from '../utils/geometry';
+import { snapToGrid, isColliding, findFreePosition, getBoundingBox } from '../utils/geometry';
+
+interface SnapData {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    relX: number;
+    relY: number;
+    relW: number;
+    relH: number;
+}
 
 interface ItemInteractionConfig {
   item: CanvasItem;
@@ -14,6 +25,7 @@ interface ItemInteractionConfig {
   selectedIds: string[];
   onGroupDrag?: (dx: number, dy: number) => void;
   onGroupDragEnd?: () => void;
+  onBatchLocalUpdate?: (updates: { id: string, data: Partial<CanvasItem> }[]) => void;
 }
 
 export const useItemInteraction = ({
@@ -27,18 +39,24 @@ export const useItemInteraction = ({
   isSelected,
   selectedIds,
   onGroupDrag,
-  onGroupDragEnd
+  onGroupDragEnd,
+  onBatchLocalUpdate
 }: ItemInteractionConfig) => {
   const [localState, setLocalState] = useState<Partial<CanvasItem> | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [isTapCheck, setIsTapCheck] = useState(false);
   const [dragStart, setDragStart] = useState<Point | null>(null);
   const [isResizing, setIsResizing] = useState(false);
+  
+  // Extended Resize State for Groups
   const [resizeStart, setResizeStart] = useState<{
     startX: number; startY: number;
     origX: number; origY: number;
     origW: number; origH: number;
-    handle: ResizeHandle
+    handle: ResizeHandle;
+    // Group Data
+    groupBounds?: { x: number, y: number, width: number, height: number };
+    itemSnapshots?: Record<string, SnapData>;
   } | null>(null);
 
   const initialDragItemRef = useRef<CanvasItem | null>(null);
@@ -85,10 +103,39 @@ export const useItemInteraction = ({
     setIsResizing(true);
     initialDragItemRef.current = { ...item };
     setLocalState({ x: item.x, y: item.y, width: item.width, height: item.height });
+    
+    // Handle Group Resize Initialization
+    let groupData: { x: number, y: number, width: number, height: number } | undefined;
+    let itemSnapshots: Record<string, SnapData> | undefined;
+
+    if (selectedIds.length > 1 && isSelected) {
+        const selectedItems = items.filter(i => selectedIds.includes(i.id));
+        const bounds = getBoundingBox(selectedItems);
+        
+        if (bounds) {
+            groupData = { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height };
+            itemSnapshots = {};
+            selectedItems.forEach(i => {
+                // Store relative positions normalized to group bounds (0.0 to 1.0)
+                if (itemSnapshots) {
+                    itemSnapshots[i.id] = {
+                        x: i.x, y: i.y, width: i.width, height: i.height,
+                        relX: (i.x - bounds.x) / bounds.width,
+                        relY: (i.y - bounds.y) / bounds.height,
+                        relW: i.width / bounds.width,
+                        relH: i.height / bounds.height
+                    };
+                }
+            });
+        }
+    }
+
     setResizeStart({
       startX: clientX, startY: clientY,
       origX: item.x, origY: item.y, origW: item.width, origH: item.height,
-      handle
+      handle,
+      groupBounds: groupData,
+      itemSnapshots: itemSnapshots
     });
   };
 
@@ -154,7 +201,9 @@ export const useItemInteraction = ({
       if (isResizing && resizeStart && startItem) {
         const dx = (clientX - resizeStart.startX) / currentScale;
         const dy = (clientY - resizeStart.startY) / currentScale;
-        const { origX, origY, origW, origH, handle } = resizeStart;
+        const { origX, origY, origW, origH, handle, groupBounds, itemSnapshots } = resizeStart;
+        
+        // 1. Calculate the NEW dimensions of the ACTIVE item first
         const aspectRatio = origW / origH;
         let candW = origW;
         let candH = origH;
@@ -162,12 +211,17 @@ export const useItemInteraction = ({
         if (handle.includes('w')) candW = origW - dx;
         if (handle.includes('s')) candH = origH + dy;
         if (handle.includes('n')) candH = origH - dy;
+        
         const minSize = snapEnabled ? gridSize : 20;
         candW = Math.max(minSize, candW);
         candH = Math.max(minSize, candH);
+        
+        // Single Item Aspect Ratio Logic (optional/default behavior)
+        // Note: For groups, we often want free scaling, but maintaining individual aspect ratio logic for the driver is safer UI
         const wRatio = Math.abs(candW - origW) / origW;
         const hRatio = Math.abs(candH - origH) / origH;
         let finalW, finalH;
+        
         if (wRatio > hRatio) {
             finalW = candW;
             if (snapEnabled) finalW = Math.max(gridSize, snapToGrid(finalW, gridSize));
@@ -177,11 +231,72 @@ export const useItemInteraction = ({
             if (snapEnabled) finalH = Math.max(gridSize, snapToGrid(finalH, gridSize));
             finalW = finalH * aspectRatio;
         }
+
+        // Calculate final X/Y for active item
         let finalX = origX;
         let finalY = origY;
         if (handle.includes('w')) finalX = origX + (origW - finalW);
         if (handle.includes('n')) finalY = origY + (origH - finalH);
-        setLocalState({ x: finalX, y: finalY, width: finalW, height: finalH });
+
+        // 2. Check if this is a Group Resize
+        if (selectedIds.length > 1 && groupBounds && itemSnapshots && onBatchLocalUpdate) {
+             // Calculate scaling factor based on the ACTIVE item's change
+             // scaleX = newWidth / oldWidth
+             const scaleX = finalW / origW;
+             const scaleY = finalH / origH;
+
+             // Calculate new Group Dimensions
+             const newGroupW = groupBounds.width * scaleX;
+             const newGroupH = groupBounds.height * scaleY;
+
+             // Calculate new Group Position
+             // This depends on the handle direction of the ACTIVE item
+             // We need to keep the "anchor" side stationary
+             let newGroupX = groupBounds.x;
+             let newGroupY = groupBounds.y;
+
+             // If active handle has 'w', it means we are pushing left. 
+             // The group anchor is the "East" side of the group? No, simpler:
+             // We know the Active Item's old vs new position relative to the group.
+             
+             // Let's use the active item's position delta to drive the group position
+             // Old Relative X of active item: (origX - groupBounds.x) / groupBounds.width
+             // New X of active item is `finalX`.
+             // finalX = newGroupX + (relX * newGroupW)
+             // So: newGroupX = finalX - (relX * newGroupW)
+             
+             const activeSnapshot = itemSnapshots[item.id];
+             if (activeSnapshot) {
+                 newGroupX = finalX - (activeSnapshot.relX * newGroupW);
+                 newGroupY = finalY - (activeSnapshot.relY * newGroupH);
+             }
+
+             // Apply to ALL selected items
+             const updates: { id: string, data: Partial<CanvasItem> }[] = [];
+             
+             Object.entries(itemSnapshots).forEach(([id, snap]) => {
+                  const s = snap as SnapData;
+                  updates.push({
+                      id,
+                      data: {
+                          x: newGroupX + (s.relX * newGroupW),
+                          y: newGroupY + (s.relY * newGroupH),
+                          width: s.relW * newGroupW,
+                          height: s.relH * newGroupH
+                      }
+                  });
+             });
+
+             onBatchLocalUpdate(updates);
+             
+             // Update local state for the active item component so it feels responsive immediately
+             // (Though onBatchLocalUpdate should trigger a re-render from parent)
+             setLocalState({ x: finalX, y: finalY, width: finalW, height: finalH });
+
+        } else {
+             // Single Item Resize
+            setLocalState({ x: finalX, y: finalY, width: finalW, height: finalH });
+        }
       }
     };
 
@@ -233,14 +348,19 @@ export const useItemInteraction = ({
           }
           if (e.type === 'touchend' && e.cancelable) e.preventDefault();
         }
-      } else if (isResizing && localState) {
-        const currentState = { ...item, ...localState };
-        const others = items.filter(i => i.id !== item.id);
-        if (isColliding(currentState, others, item.id)) {
-           const { x, y } = findFreePosition(currentState, others, 40);
-           onUpdate(item.id, { ...localState, x, y });
-        } else {
-           onUpdate(item.id, localState);
+      } else if (isResizing) {
+        // Handle Resize End Commit
+        if (selectedIds.length > 1 && onGroupDragEnd) {
+             onGroupDragEnd();
+        } else if (localState) {
+            const currentState = { ...item, ...localState };
+            const others = items.filter(i => i.id !== item.id);
+            if (isColliding(currentState, others, item.id)) {
+               const { x, y } = findFreePosition(currentState, others, 40);
+               onUpdate(item.id, { ...localState, x, y });
+            } else {
+               onUpdate(item.id, localState);
+            }
         }
       }
 
@@ -265,7 +385,7 @@ export const useItemInteraction = ({
       window.removeEventListener('touchmove', handleGlobalMove as any);
       window.removeEventListener('touchend', handleUp);
     };
-  }, [isDragging, isResizing, isTapCheck, dragStart, resizeStart, onUpdate, item.id, snapEnabled, localState, items, onSelect, item, selectedIds, onGroupDrag, onGroupDragEnd]);
+  }, [isDragging, isResizing, isTapCheck, dragStart, resizeStart, onUpdate, item.id, snapEnabled, localState, items, onSelect, item, selectedIds, onGroupDrag, onGroupDragEnd, onBatchLocalUpdate]);
 
   return {
     localState,

@@ -20,6 +20,7 @@ interface CanvasProps {
   onRenameComplete: (id: string, newName: string) => void;
   onGroupDrag?: (dx: number, dy: number) => void;
   onGroupDragEnd?: () => void;
+  onBatchLocalUpdate?: (updates: { id: string, data: Partial<ICanvasItem> }[]) => void;
 }
 
 export interface CanvasHandle {
@@ -42,7 +43,8 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
   onCanvasContextMenu,
   onRenameComplete,
   onGroupDrag,
-  onGroupDragEnd
+  onGroupDragEnd,
+  onBatchLocalUpdate
 }, ref) => {
   const viewportRef = useRef<Viewport>({ x: 0, y: 0, scale: 1 });
   const containerRef = useRef<HTMLDivElement>(null);
@@ -137,6 +139,7 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(({
               onRenameComplete={(name) => onRenameComplete(item.id, name)}
               onGroupDrag={onGroupDrag}
               onGroupDragEnd={onGroupDragEnd}
+              onBatchLocalUpdate={onBatchLocalUpdate}
             />
           ))}
 
